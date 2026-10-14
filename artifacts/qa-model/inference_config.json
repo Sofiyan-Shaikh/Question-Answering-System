@@ -1,0 +1,6 @@
+{
+  "null_threshold": -2.35,
+  "model_version": "qa-model-pkl",
+  "max_length": 512,
+  "doc_stride": 128
+}

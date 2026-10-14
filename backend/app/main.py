@@ -1,0 +1,52 @@
+"""Main FastAPI application"""
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from .config import settings
+from .services.predictor import predictor
+from .routes import health, auth_routes, qa_routes, analytics
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: load model on startup"""
+    print("Starting up... Loading model...")
+    try:
+        predictor.load_model()
+        print("Model loaded successfully!")
+    except Exception as e:
+        print(f"Warning: Could not load model: {e}")
+    yield
+    print("Shutting down...")
+
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    lifespan=lifespan
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(health.router, prefix=settings.API_V1_PREFIX, tags=["health"])
+app.include_router(auth_routes.router, prefix=f"{settings.API_V1_PREFIX}/auth", tags=["auth"])
+app.include_router(qa_routes.router, prefix=f"{settings.API_V1_PREFIX}/qa", tags=["qa"])
+app.include_router(analytics.router, prefix=f"{settings.API_V1_PREFIX}/analytics", tags=["analytics"])
+
+
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "message": "Question Answering System API",
+        "version": settings.VERSION,
+        "docs": "/docs"
+    }
