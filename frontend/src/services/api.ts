@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import { QARequest, QAResponse, LoginRequest, AuthToken, HealthResponse, MetricsResponse } from '../types';
+import { QARequest, QAResponse, LoginRequest, AuthToken, HealthResponse, MetricsResponse, PDFQAResponse, PDFExtractResponse } from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 const API_V1_PREFIX = '/api/v1';
@@ -88,6 +88,34 @@ class ApiService {
   // Question Answering
   async predictAnswer(request: QARequest): Promise<QAResponse> {
     const response = await this.api.post(`${API_V1_PREFIX}/qa/predict`, request);
+    return response.data;
+  }
+
+  // PDF Question Answering
+  async predictPdfAnswer(file: File, question: string, topK: number = 1): Promise<PDFQAResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('question', question);
+    formData.append('top_k', topK.toString());
+
+    const response = await this.api.post(`${API_V1_PREFIX}/qa/predict-pdf`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  }
+
+  // PDF Text Extraction
+  async extractPdfText(file: File): Promise<PDFExtractResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await this.api.post(`${API_V1_PREFIX}/qa/extract-pdf-text`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
     return response.data;
   }
 

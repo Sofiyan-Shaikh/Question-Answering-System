@@ -156,18 +156,51 @@ Base URL: `http://localhost:8000/api/v1`
 }
 ```
 
+### `POST /api/v1/qa/predict-pdf`
+
+Upload a multi-page PDF document and ask questions against it. The system indexes pages with BM25, retrieves the most relevant passage candidate, and extracts the answer with source page attribution.
+
+**Request (`multipart/form-data`)**
+- `file`: PDF file (`.pdf`)
+- `question`: `"Who is the principal system architect?"`
+- `top_k`: `1` (optional, default 1)
+
+**Response**
+```json
+{
+  "answer": "Alexander Pierce",
+  "answers": [
+    {
+      "answer": "Alexander Pierce",
+      "confidence_score": 1.0,
+      "start_char": 58,
+      "end_char": 74,
+      "sub_question": null
+    }
+  ],
+  "is_answerable": true,
+  "confidence_score": 1.0,
+  "page_number": 2,
+  "total_pages": 3,
+  "matched_passage": "Engineering Department: The principal system architect is Alexander Pierce.",
+  "filename": "q3_report.pdf",
+  "model_version": "qa-model-pkl",
+  "execution_time_ms": 324.28
+}
+```
+
 ---
 
 ## Running Tests
 
 ```bash
-# Backend unit + integration tests
-cd backend
-pytest tests/ -v
+# Run all 43 tests
+pytest backend/tests/ -v
 
 # Individual suites
-pytest tests/test_model.py -v    # offset mapping, threshold logic, predictor
-pytest tests/test_api.py   -v    # all FastAPI endpoints
+pytest backend/tests/test_model.py -v   # offset mapping, threshold logic, predictor
+pytest backend/tests/test_api.py   -v   # standard REST endpoints & authentication
+pytest backend/tests/test_pdf_qa.py -v  # PDF extraction, BM25 retrieval, and PDF QA
 ```
 
 ---

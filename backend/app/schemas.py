@@ -1,6 +1,6 @@
 """Pydantic schemas for request/response validation"""
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 
 class AnswerSpan(BaseModel):
@@ -80,3 +80,33 @@ class MetricsResponse(BaseModel):
     f1_score: float
     null_threshold: float
     total_samples: int
+
+
+class PDFPageData(BaseModel):
+    """Metadata and extracted text for an individual PDF page"""
+    page_number: int
+    text: str
+    char_count: int
+
+
+class PDFExtractResponse(BaseModel):
+    """Extracted text and metadata for a PDF document"""
+    filename: str
+    total_pages: int
+    text: str
+    pages: List[PDFPageData]
+
+
+class PDFQAResponse(BaseModel):
+    """Question Answering response schema for PDF documents"""
+    answer: str = Field(..., description="Primary extracted answer")
+    answers: Optional[List[AnswerSpan]] = Field(default=None, description="All extracted distinct answer spans")
+    is_answerable: bool = Field(..., description="Whether the question can be answered from the PDF")
+    confidence_score: float = Field(..., ge=0.0, le=1.0, description="Confidence score")
+    page_number: Optional[int] = Field(default=None, description="1-indexed page where the answer was found")
+    total_pages: int = Field(..., description="Total pages in the PDF")
+    matched_passage: Optional[str] = Field(default=None, description="Context excerpt containing the answer")
+    filename: str = Field(..., description="Name of the PDF file")
+    model_version: str = Field(..., description="Model version identifier")
+    execution_time_ms: float = Field(..., description="Execution time in milliseconds")
+
