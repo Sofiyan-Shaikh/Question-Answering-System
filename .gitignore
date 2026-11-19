@@ -60,3 +60,8 @@ coverage.xml
 logs/
 qa_model.pkl
 *.backup
+data/
+backend/data/
+*.db
+*.sqlite
+*.sqlite3

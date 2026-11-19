@@ -1,11 +1,17 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const Navbar: React.FC = () => {
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const { user, logout, isAuthenticated } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
 
   const navLinks = [
     {
@@ -14,6 +20,15 @@ const Navbar: React.FC = () => {
       icon: (
         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+        </svg>
+      ),
+    },
+    {
+      name: 'History & Docs',
+      path: '/history',
+      icon: (
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       ),
     },
@@ -89,27 +104,40 @@ const Navbar: React.FC = () => {
               </span>
             </div>
 
-            {/* User Session Pill */}
-            {user?.username && (
+            {/* User Session / Sign Out or Sign In */}
+            {isAuthenticated && user?.token ? (
               <div className="flex items-center gap-2 pl-2 border-l border-white/10">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-slate-700 to-slate-600 border border-white/10 flex items-center justify-center text-xs font-bold text-slate-200">
-                  {user.username.charAt(0).toUpperCase()}
+                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-emerald-700 via-teal-600 to-cyan-500 border border-emerald-400/30 flex items-center justify-center text-xs font-bold text-white shadow-md shadow-emerald-950/40">
+                  {(user.username || user.email || 'U').charAt(0).toUpperCase()}
                 </div>
                 <div className="hidden lg:block text-left">
-                  <p className="text-xs font-semibold text-slate-200 leading-none">{user.username}</p>
-                  <p className="text-[10px] text-slate-400 leading-tight">Analyst</p>
+                  <p className="text-xs font-semibold text-slate-200 leading-none max-w-[120px] truncate" title={user.email || user.username}>
+                    {user.username}
+                  </p>
+                  <p className="text-[10px] text-emerald-400 font-mono leading-tight">Verified</p>
                 </div>
                 <button
                   type="button"
-                  onClick={logout}
-                  className="text-xs text-slate-400 hover:text-rose-400 p-1 rounded-lg hover:bg-white/5 transition-colors"
-                  title="Sign out"
+                  onClick={handleLogout}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:text-rose-300 bg-white/5 hover:bg-rose-950/40 border border-white/10 hover:border-rose-500/40 rounded-xl transition-all shadow-sm group"
+                  title="Sign out of QA Engine"
                 >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-3.5 h-3.5 text-slate-400 group-hover:text-rose-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                   </svg>
+                  <span className="hidden sm:inline">Sign Out</span>
                 </button>
               </div>
+            ) : (
+              <Link
+                to="/login"
+                className="btn-primary px-3.5 py-1.5 text-xs font-semibold flex items-center gap-1.5 rounded-xl shadow-md shadow-emerald-950/40 transition-all hover:scale-105"
+              >
+                <span>Sign In</span>
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                </svg>
+              </Link>
             )}
 
             {/* Mobile Hamburger Button */}
@@ -132,7 +160,7 @@ const Navbar: React.FC = () => {
 
         {/* Mobile Navigation Drawer */}
         {mobileMenuOpen && (
-          <div className="md:hidden py-3 border-t border-white/10 space-y-1 fade-in">
+          <div className="md:hidden py-3 border-t border-white/10 space-y-2 fade-in">
             {navLinks.map((item) => {
               const isCurrent =
                 item.path === '/workspace'
@@ -154,6 +182,42 @@ const Navbar: React.FC = () => {
                 </Link>
               );
             })}
+
+            {/* Mobile Session Action */}
+            <div className="pt-2 border-t border-white/10">
+              {isAuthenticated && user?.token ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2.5 px-3 py-1.5 text-xs text-slate-400 font-mono">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    <span>Signed in as: <strong className="text-white">{user.username}</strong></span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      handleLogout();
+                    }}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-rose-300 bg-rose-950/30 border border-rose-500/30 hover:bg-rose-950/60 transition-all"
+                  >
+                    <svg className="w-4 h-4 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                    <span>Sign Out</span>
+                  </button>
+                </div>
+              ) : (
+                <Link
+                  to="/login"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="w-full btn-primary flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                  </svg>
+                  <span>Sign In</span>
+                </Link>
+              )}
+            </div>
           </div>
         )}
       </div>

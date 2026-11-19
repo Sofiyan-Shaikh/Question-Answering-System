@@ -1,69 +1,53 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 import { User } from '../types';
 
 interface AuthContextType {
   user: User | null;
-  login: (username: string, token: string) => void;
+  login: (username: string, token: string, email?: string) => void;
   logout: () => void;
   isAuthenticated: boolean;
 }
 
-const DEFAULT_USER: User = {
-  username: 'analyst',
-  token: localStorage.getItem('token') || '',
-};
-
 const AuthContext = createContext<AuthContextType>({
-  user: DEFAULT_USER,
+  user: null,
   login: () => {},
   logout: () => {},
-  isAuthenticated: true,
+  isAuthenticated: false,
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User>(() => {
+  const [user, setUser] = useState<User | null>(() => {
     const token = localStorage.getItem('token');
-    const username = localStorage.getItem('username') || 'analyst';
-    return { username, token: token || '' };
+    const username = localStorage.getItem('username');
+    const email = localStorage.getItem('email') || undefined;
+    if (token && username) {
+      return { username, token, email };
+    }
+    return null;
   });
 
-  useEffect(() => {
-    // Ensure token exists on mount
-    const token = localStorage.getItem('token');
-    if (!token) {
-      // Trigger background login to retrieve token
-      const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-      fetch(`${API_BASE_URL}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'analyst', password: 'password123' }),
-      })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data?.access_token) {
-            localStorage.setItem('token', data.access_token);
-            localStorage.setItem('username', 'analyst');
-            setUser({ username: 'analyst', token: data.access_token });
-          }
-        })
-        .catch(() => {});
-    }
-  }, []);
-
-  const login = (username: string, token: string) => {
+  const login = (username: string, token: string, email?: string) => {
     localStorage.setItem('token', token);
     localStorage.setItem('username', username);
-    setUser({ username, token });
+    if (email) {
+      localStorage.setItem('email', email);
+    } else {
+      localStorage.removeItem('email');
+    }
+    setUser({ username, token, email });
   };
 
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('username');
-    setUser({ username: 'analyst', token: '' });
+    localStorage.removeItem('email');
+    setUser(null);
   };
 
+  const isAuthenticated = Boolean(user && user.token);
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAuthenticated: true }}>
+    <AuthContext.Provider value={{ user, login, logout, isAuthenticated }}>
       {children}
     </AuthContext.Provider>
   );

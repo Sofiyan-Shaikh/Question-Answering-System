@@ -3,14 +3,21 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
+from .db import init_db
 from .services.predictor import predictor
-from .routes import health, auth_routes, qa_routes, analytics
+from .routes import health, auth_routes, qa_routes, analytics, history_routes, document_routes
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan: load model on startup"""
-    print("Starting up... Loading model...")
+    """Application lifespan: initialize database and load QA model on startup"""
+    print("Starting up... Initializing database and storage...")
+    try:
+        init_db()
+    except Exception as e:
+        print(f"Warning: Database initialization error: {e}")
+
+    print("Loading QA model...")
     try:
         predictor.load_model()
         print("Model loaded successfully!")
@@ -40,6 +47,8 @@ app.include_router(health.router, prefix=settings.API_V1_PREFIX, tags=["health"]
 app.include_router(auth_routes.router, prefix=f"{settings.API_V1_PREFIX}/auth", tags=["auth"])
 app.include_router(qa_routes.router, prefix=f"{settings.API_V1_PREFIX}/qa", tags=["qa"])
 app.include_router(analytics.router, prefix=f"{settings.API_V1_PREFIX}/analytics", tags=["analytics"])
+app.include_router(history_routes.router, prefix=f"{settings.API_V1_PREFIX}/history", tags=["history"])
+app.include_router(document_routes.router, prefix=f"{settings.API_V1_PREFIX}/documents", tags=["documents"])
 
 
 @app.get("/")

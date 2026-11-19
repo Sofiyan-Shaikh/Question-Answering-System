@@ -9,6 +9,7 @@ import Workspace from './pages/Workspace';
 import Analytics from './pages/Analytics';
 import ModelCard from './pages/ModelCard';
 import About from './pages/About';
+import History from './pages/History';
 
 const AppContent: React.FC = () => {
   const location = useLocation();
@@ -26,6 +27,14 @@ const AppContent: React.FC = () => {
             element={
               <ProtectedRoute>
                 <Workspace />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/history"
+            element={
+              <ProtectedRoute>
+                <History />
               </ProtectedRoute>
             }
           />

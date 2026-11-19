@@ -22,6 +22,22 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
+    # OTP Verification Settings
+    OTP_EXPIRE_SECONDS: int = 300       # 5 minutes validity
+    OTP_COOLDOWN_SECONDS: int = 60      # 1 minute between resends
+    OTP_MAX_ATTEMPTS: int = 3           # Max failed verification tries
+    DEV_SHOW_OTP: bool = True           # Return/log OTP for local dev testing
+    
+    # Transactional Email Settings (Resend or SMTP)
+    RESEND_API_KEY: str = ""            # Resend API key (https://resend.com)
+    SMTP_HOST: str = ""                 # e.g., smtp.gmail.com or email-smtp.us-east-1.amazonaws.com
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = "noreply@qasystem.com"
+    SMTP_FROM_NAME: str = "QA Intelligence Engine"
+    SMTP_USE_TLS: bool = True
+    
     # CORS
     BACKEND_CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:8000"]
     
@@ -30,6 +46,12 @@ class Settings(BaseSettings):
     
     # Null Threshold for unanswerable detection
     NULL_THRESHOLD: float = -2.35
+    
+    # Storage & History Database Configuration
+    DATA_DIR: str = "./data"
+    UPLOAD_DIR: str = "./data/uploads"
+    DATABASE_PATH: str = "./data/qa_system.db"
+    DATABASE_URL: str = ""  # If set, can point to postgresql://user:pass@host/dbname
     
     class Config:
         env_file = ".env"

@@ -61,6 +61,129 @@ def _load_pickle_weights(pkl_path: str, device: str = "cpu") -> Dict[str, torch.
         raise ValueError(f"Unsupported object type in pickle: {type(raw_obj)}")
 
 
+KNOWN_ABBREVIATIONS = {
+    "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "vs.",
+    "inc.", "ltd.", "co.", "corp.", "approx.", "dept.", "fig.",
+    "vol.", "no.", "i.e.", "e.g.", "u.s.", "u.k.", "u.n.",
+    "jan.", "feb.", "mar.", "apr.", "jun.", "jul.", "aug.", "sep.", "oct.", "nov.", "dec.", "st."
+}
+
+
+def _split_into_sentences(text: str) -> List[Tuple[str, int, int]]:
+    """
+    Splits text into (sentence_text, start_char, end_char) tuples.
+    Works reliably across abbreviations, initials, decimals, and paragraphs.
+    """
+    if not text:
+        return []
+
+    pattern = re.compile(r'([.!?]+)([\s\r\n]+|$)|(\n\s*\n+)')
+    sentence_spans = []
+    current_start = 0
+
+    for match in pattern.finditer(text):
+        punct = match.group(1)
+        double_newline = match.group(3)
+
+        if double_newline:
+            end_pos = match.start()
+            segment = text[current_start:end_pos].strip()
+            if segment:
+                offset = text[current_start:end_pos].find(segment)
+                sentence_spans.append((segment, current_start + offset, current_start + offset + len(segment)))
+            current_start = match.end()
+            continue
+
+        if punct:
+            p_start = match.start(1)
+            p_end = match.end(1)
+            # 1. Decimal number check (e.g. 3.14)
+            if punct == "." and p_start > 0 and text[p_start - 1].isdigit() and p_end < len(text) and text[p_end].isdigit():
+                continue
+
+            # 2. Abbreviation check
+            word_before = text[current_start:p_end].split()[-1].lower() if text[current_start:p_end].split() else ""
+            if word_before in KNOWN_ABBREVIATIONS:
+                continue
+
+            # 3. Single letter initial (e.g. "J. K.")
+            if len(word_before) == 2 and word_before[0].isalpha() and word_before[1] == ".":
+                continue
+
+            # 4. Check if following non-whitespace character is lowercase
+            match_end = match.end()
+            next_char = None
+            for ch in text[match_end:]:
+                if not ch.isspace():
+                    next_char = ch
+                    break
+            if next_char and next_char.islower() and punct == ".":
+                continue
+
+            # Valid sentence end
+            end_pos = match.end(1)
+            while end_pos < len(text) and text[end_pos] in "\"'”)":
+                end_pos += 1
+
+            segment = text[current_start:end_pos].strip()
+            if segment:
+                offset = text[current_start:end_pos].find(segment)
+                sentence_spans.append((segment, current_start + offset, current_start + offset + len(segment)))
+
+            current_start = match.end()
+
+    if current_start < len(text):
+        segment = text[current_start:].strip()
+        if segment:
+            offset = text[current_start:].find(segment)
+            sentence_spans.append((segment, current_start + offset, current_start + offset + len(segment)))
+
+    return sentence_spans
+
+
+def _extract_descriptive_answer(context: str, start_char: int, end_char: int) -> str:
+    """
+    Given context and an answer span [start_char, end_char],
+    extract the full descriptive sentence (or surrounding context if the sentence is very short).
+    """
+    if not context or start_char < 0:
+        return ""
+
+    sentences = _split_into_sentences(context)
+    if not sentences:
+        return context.strip()
+
+    matching_idx = []
+    for idx, (s_text, s_start, s_end) in enumerate(sentences):
+        if not (end_char <= s_start or start_char >= s_end):
+            matching_idx.append(idx)
+
+    if not matching_idx:
+        closest_idx = 0
+        min_dist = float('inf')
+        for idx, (s_text, s_start, s_end) in enumerate(sentences):
+            dist = min(abs(start_char - s_start), abs(start_char - s_end))
+            if dist < min_dist:
+                min_dist = dist
+                closest_idx = idx
+        matching_idx = [closest_idx]
+
+    first_idx = matching_idx[0]
+    last_idx = matching_idx[-1]
+
+    combined_text = " ".join(sentences[i][0] for i in range(first_idx, last_idx + 1))
+
+    # If the matched sentence is extremely brief (< 35 chars), expand with adjacent sentence
+    if len(combined_text) < 35:
+        if last_idx + 1 < len(sentences):
+            last_idx += 1
+        elif first_idx > 0:
+            first_idx -= 1
+        combined_text = " ".join(sentences[i][0] for i in range(first_idx, last_idx + 1))
+
+    return combined_text
+
+
 def _detect_multi_answer_intent(question: str) -> int:
     """Detect if the question intends multiple answers, e.g. 'two', 'three', 'list', 'founders'."""
     q_lower = question.lower().strip()
@@ -122,7 +245,75 @@ def _maybe_linearize_table(context: str) -> Tuple[str, bool]:
     return context, False
 
 
-ELLIPTICAL_PATTERNS = r"^(in what|in which|at what|on what|what year|when|where|who|whom|by whom|why|how|which)\b"
+
+STOP_WORDS_SET = {
+    "why", "did", "the", "in", "of", "to", "was", "a", "an", "and", "or", "for",
+    "on", "at", "by", "with", "from", "is", "are", "were", "what", "which", "how", "who", "it", "its"
+}
+
+
+def _normalize_contrastive_query(question: str) -> str:
+    """
+    Strips trailing contrastive clauses like 'rather than Y', 'instead of Y', 'in favor of Y'
+    which distract extractive attention.
+    """
+    q_clean = question.strip()
+    norm = re.sub(r",?\s+(?:rather than|instead of|in favor of)\s+[^?]+(\??)$", r"\1", q_clean, flags=re.IGNORECASE)
+    return norm.strip()
+
+
+def _decompose_comparative_question(question: str) -> List[str]:
+    """
+    Decomposes questions comparing two entities ('X compared to Y', 'X vs Y', 'X versus Y')
+    into two parallel queries.
+    """
+    q_clean = question.strip().rstrip("?").strip()
+    comp_match = re.search(r",?\s+(?:compared to|versus|vs\.?)\s+", q_clean, flags=re.IGNORECASE)
+    if not comp_match:
+        return [question]
+
+    idx_start, idx_end = comp_match.span()
+    part1 = q_clean[:idx_start].strip()
+    part2 = q_clean[idx_end:].strip()
+
+    if not part1 or not part2:
+        return [question]
+
+    sub_q1 = part1 if part1.endswith("?") else part1 + "?"
+
+    # 1. Attribute comparison: "What is the X of Y compared to Z?"
+    attr_match = re.search(r"^(?:what (?:is|was) the\s+)(.+?)\s+(?:of|for|in|at)\s+(.+)$", part1, flags=re.IGNORECASE)
+    if attr_match:
+        raw_attr = attr_match.group(1).strip()
+        if len(part2.split()) <= 4 and not part2.lower().startswith("the "):
+            clean_attr = re.sub(r"\b(aperture|collecting|total)\s+", "", raw_attr, flags=re.IGNORECASE).strip()
+            sub_q2 = f"What is {part2}'s {clean_attr}?"
+            return [sub_q1, sub_q2]
+
+    of_match = re.search(r"^(.*?\b(?:of|for|in|at)\s+)(.+)$", part1, flags=re.IGNORECASE)
+    if of_match:
+        prefix = of_match.group(1)
+        if len(part2.split()) <= 4 and not part2.lower().startswith("the "):
+            sub_q2 = f"{prefix}{part2}?"
+            return [sub_q1, sub_q2]
+        elif part1.lower().startswith("how many") or part1.lower().startswith("how much"):
+            unit_match = re.match(r"^(how (?:many|much)\s+[\w]+)", part1, flags=re.IGNORECASE)
+            if unit_match:
+                unit_phrase = unit_match.group(1)
+                clean_part2 = re.sub(r"^(?:the\s+)?(?:monthly\s+|annual\s+|daily\s+|weekly\s+)?", "", part2, flags=re.IGNORECASE).strip()
+                sub_q2 = f"{unit_phrase} was the {clean_part2}?"
+            else:
+                sub_q2 = f"How much was {part2}?"
+            return [sub_q1, sub_q2]
+        else:
+            sub_q2 = f"What was {part2}?"
+            return [sub_q1, sub_q2]
+
+    sub_q2 = f"What was {part2}?"
+    return [sub_q1, sub_q2]
+
+
+ELLIPTICAL_PATTERNS = r"^(in what|in which|at what|on what|what|when|where|who|whom|by whom|why|how|which)\b"
 
 
 def _decompose_single_question_clause(question: str) -> List[str]:
@@ -186,17 +377,25 @@ def _decompose_single_question_clause(question: str) -> List[str]:
 
 def _decompose_compound_question(question: str) -> List[str]:
     """
-    Decompose complex questions (multi-sentence or compound coordinated)
+    Decompose complex questions (multi-sentence, comparative, or compound coordinated)
     into atomic sub-questions.
     Handles:
+    - Comparative queries: "What is the diameter of JWST compared to Hubble?"
     - Multi-sentence questions: "Who founded Amazon and in what year? What was its original product focus?"
     - Single coordinated questions: "Who founded Amazon and in what year?"
     """
-    q_str = question.strip().rstrip(",").strip()
-    
-    # Split by '?' while preserving valid sub-question sentences
+    q_norm = _normalize_contrastive_query(question)
+
+    # 1. Check for comparative questions (e.g. 'X compared to Y')
+    comp_sub_qs = _decompose_comparative_question(q_norm)
+    if len(comp_sub_qs) > 1:
+        return comp_sub_qs
+
+    q_str = q_norm.strip().rstrip(",").strip()
+
+    # 2. Split by '?' while preserving valid sub-question sentences
     raw_sentences = [s.strip() for s in q_str.split("?") if s.strip()]
-    
+
     if len(raw_sentences) > 1:
         decomposed = []
         for s in raw_sentences:
@@ -204,7 +403,7 @@ def _decompose_compound_question(question: str) -> List[str]:
             decomposed.extend(_decompose_single_question_clause(s_q))
         return decomposed
 
-    return _decompose_single_question_clause(question)
+    return _decompose_single_question_clause(q_norm)
 
 
 class QAPredictor:
@@ -328,20 +527,52 @@ class QAPredictor:
         if len(sub_questions) > 1:
             combined_spans = []
             for sub_q in sub_questions:
-                sub_res = self._predict_single_query(context, sub_q, top_k=1)
+                target_context = context
+                offset_shift = 0
+                is_anaphoric = bool(re.search(r"\b(it|its|they|their|he|his|she|her|this|the facility|the site|the company|where|located)\b", sub_q, flags=re.IGNORECASE))
+                if combined_spans and is_anaphoric:
+                    # Anchor to the paragraph of the preceding span to avoid entity drift across distant paragraphs
+                    anchor_sc = combined_spans[-1]["start_char"]
+                    if anchor_sc >= 0:
+                        p_start = context.rfind("\n\n", 0, anchor_sc)
+                        p_start = 0 if p_start == -1 else p_start + 2
+                        p_end = context.find("\n\n", anchor_sc)
+                        p_end = len(context) if p_end == -1 else p_end
+                        candidate_para = context[p_start:p_end]
+                        if len(candidate_para.strip()) > 50:
+                            sub_local_res = self._predict_single_query(candidate_para, sub_q, top_k=1)
+                            if sub_local_res.get("is_answerable"):
+                                target_context = candidate_para
+                                offset_shift = p_start
+
+                sub_res = self._predict_single_query(target_context, sub_q, top_k=1)
                 if sub_res.get("is_answerable"):
                     for span in sub_res.get("answers", []):
-                        if not any(s["answer"].lower() == span["answer"].lower() for s in combined_spans):
-                            span_item = dict(span)
+                        span_item = dict(span)
+                        if offset_shift > 0:
+                            span_item["start_char"] += offset_shift
+                            span_item["end_char"] += offset_shift
+                            span_item["descriptive_answer"] = _extract_descriptive_answer(context, span_item["start_char"], span_item["end_char"])
+                        if not any(s["answer"].lower() == span_item["answer"].lower() for s in combined_spans):
                             span_item["sub_question"] = sub_q
                             combined_spans.append(span_item)
             
             exec_time = (time.time() - start_time) * 1000
             if combined_spans:
                 combined_answer = ", ".join(s["answer"] for s in combined_spans)
+                # Combine unique descriptive sentences
+                seen_descs = set()
+                desc_parts = []
+                for s in combined_spans:
+                    d = s.get("descriptive_answer")
+                    if d and d not in seen_descs:
+                        seen_descs.add(d)
+                        desc_parts.append(d)
+                descriptive_answer = " ".join(desc_parts) if desc_parts else None
                 avg_confidence = round(sum(s["confidence_score"] for s in combined_spans) / len(combined_spans), 4)
                 return {
                     "answer": combined_answer,
+                    "descriptive_answer": descriptive_answer,
                     "answers": combined_spans,
                     "is_answerable": True,
                     "confidence_score": avg_confidence,
@@ -353,6 +584,7 @@ class QAPredictor:
             else:
                 return {
                     "answer": "",
+                    "descriptive_answer": None,
                     "answers": [],
                     "is_answerable": False,
                     "confidence_score": 0.0,
@@ -403,12 +635,14 @@ class QAPredictor:
         end_logits = outputs.end_logits
         
         # 5. Extract top-k distinct non-overlapping answers
+        working_q = _normalize_contrastive_query(question)
         answer_spans = self._extract_top_k_spans(
             start_logits=start_logits,
             end_logits=end_logits,
             offset_mapping=offset_mapping,
             seq_ids=seq_ids_list,
             context=working_context,
+            question=working_q,
             top_k=effective_top_k
         )
 
@@ -421,18 +655,32 @@ class QAPredictor:
                     span["start_char"] = orig_pos
                     span["end_char"] = orig_pos + len(ans_text)
 
+        # 7. Attach descriptive sentence to each answer span
+        for span in answer_spans:
+            span["descriptive_answer"] = _extract_descriptive_answer(context, span["start_char"], span["end_char"])
+
         is_answerable = len(answer_spans) > 0
         if is_answerable:
             top_span = answer_spans[0]
             if effective_top_k > 1 and len(answer_spans) > 1:
                 combined_answer = ", ".join(s["answer"] for s in answer_spans)
+                seen_descs = set()
+                desc_parts = []
+                for s in answer_spans:
+                    d = s.get("descriptive_answer")
+                    if d and d not in seen_descs:
+                        seen_descs.add(d)
+                        desc_parts.append(d)
+                descriptive_answer = " ".join(desc_parts) if desc_parts else top_span.get("descriptive_answer")
             else:
                 combined_answer = top_span["answer"]
+                descriptive_answer = top_span.get("descriptive_answer")
             confidence = top_span["confidence_score"]
             start_char = top_span["start_char"]
             end_char = top_span["end_char"]
         else:
             combined_answer = ""
+            descriptive_answer = None
             confidence = 0.0
             start_char = -1
             end_char = -1
@@ -441,6 +689,7 @@ class QAPredictor:
         
         return {
             "answer": combined_answer,
+            "descriptive_answer": descriptive_answer,
             "answers": answer_spans,
             "is_answerable": is_answerable,
             "confidence_score": confidence,
@@ -457,10 +706,12 @@ class QAPredictor:
         offset_mapping,
         seq_ids: list = None,
         context: str = "",
+        question: str = "",
         top_k: int = 1,
     ) -> List[Dict]:
         """
         Extract top-k non-overlapping answer spans exceeding the null threshold tau.
+        Includes negation suppression and causal attractor validation.
         """
         if isinstance(offset_mapping, torch.Tensor):
             offset_mapping = offset_mapping.tolist()
@@ -473,16 +724,15 @@ class QAPredictor:
         elif seq_ids is not None and len(seq_ids) > 0 and not isinstance(seq_ids[0], list):
             seq_ids = [seq_ids]
 
+        q_lower = question.lower()
+        is_why_q = bool(q_lower.startswith("why") or "why did" in q_lower or "why was" in q_lower or "why is" in q_lower)
+        q_content_words = set(w for w in re.findall(r"\b[a-zA-Z]{3,}\b", q_lower) if w not in STOP_WORDS_SET)
+        sentences = _split_into_sentences(context) if is_why_q else []
+
         num_chunks = start_logits.size(0)
-        global_null_score = float('-inf')
-
-        for chunk_idx in range(num_chunks):
-            null_score = (start_logits[chunk_idx][0] + end_logits[chunk_idx][0]).item()
-            if null_score > global_null_score:
-                global_null_score = null_score
-
         candidates = []
         for chunk_idx in range(num_chunks):
+            chunk_null = (start_logits[chunk_idx][0] + end_logits[chunk_idx][0]).item()
             sl = start_logits[chunk_idx]
             el = end_logits[chunk_idx]
             chunk_seq_ids = seq_ids[chunk_idx] if seq_ids is not None else None
@@ -498,7 +748,7 @@ class QAPredictor:
                 if om_i[0] == 0 and om_i[1] == 0:
                     continue
 
-                for j in range(i, min(i + 30, seq_len)):
+                for j in range(i, min(i + 45, seq_len)):
                     if chunk_seq_ids is not None and chunk_seq_ids[j] != 1:
                         break
                     if j >= len(chunk_offsets):
@@ -508,12 +758,32 @@ class QAPredictor:
                         continue
 
                     span_score = (sl[i] + el[j]).item()
-                    delta = span_score - global_null_score
+                    delta = span_score - chunk_null
                     if delta > self.null_threshold:
                         sc = om_i[0]
                         ec = om_j[1]
                         ans_text = context[sc:ec].strip()
                         if ans_text:
+                            # 1. Negation suppression (e.g. "not for ...", "never ...")
+                            prefix_text = context[max(0, sc - 30):sc].lower()
+                            if re.search(r"\b(not|never|instead of|neither|nor|except|excluding)\s+(?:for\s+)?$", prefix_text):
+                                continue
+
+                            # 2. Causal attractor check for 'Why' queries
+                            if is_why_q and sentences:
+                                s_text = ""
+                                for st, ss, se in sentences:
+                                    if not (ec <= ss or sc >= se):
+                                        s_text = st
+                                        break
+                                s_strip = s_text.strip().lower()
+                                if s_strip.startswith("because "):
+                                    parts = s_strip.split(",", 1)
+                                    if len(parts) == 2:
+                                        consequence_words = set(re.findall(r"\b[a-zA-Z]{3,}\b", parts[1]))
+                                        if len(q_content_words & consequence_words) == 0:
+                                            continue
+
                             candidates.append({
                                 "score": span_score,
                                 "delta": delta,

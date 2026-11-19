@@ -14,6 +14,8 @@ services:
     volumes:
       # Mount trained model artifacts into the container
       - ./artifacts:/app/artifacts:ro
+      # Mount persistent database and client document vault
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s

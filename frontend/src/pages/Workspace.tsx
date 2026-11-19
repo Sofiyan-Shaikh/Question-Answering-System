@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { apiService } from '../services/api';
-import { AnswerSpan, QAResponse, PDFQAResponse } from '../types';
+import { AnswerSpan, QAResponse, PDFQAResponse, TaskHistoryItem, DocumentItem, ChatSessionItem } from '../types';
 
 interface ChatMessage {
   id: string;
@@ -134,6 +135,8 @@ const HighlightedText: React.FC<{
 
 /* ── Main Clean Workspace ─────────────────────────────────────────────── */
 const Workspace: React.FC = () => {
+  const navigate = useNavigate();
+
   // Mode & Context
   const [mode, setMode] = useState<'passage' | 'pdf'>('passage');
   const [context, setContext] = useState<string>(EXAMPLE_CONTEXT);
@@ -149,13 +152,42 @@ const Workspace: React.FC = () => {
   const [expandedSnippetId, setExpandedSnippetId] = useState<string | null>(null);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
 
-  // UI Panels
+  // ChatGPT-style Passage Session & Documents Sidebar State
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarTab, setSidebarTab] = useState<'history' | 'documents' | 'presets'>('history');
+  const [sessionsList, setSessionsList] = useState<ChatSessionItem[]>([]);
+  const [documentsList, setDocumentsList] = useState<DocumentItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => 'sess_' + Date.now().toString(36));
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+
   const [isDragging, setIsDragging] = useState(false);
 
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch passage conversation sessions and documents for sidebar
+  const fetchSidebarData = useCallback(async () => {
+    try {
+      setHistoryLoading(true);
+      const [sessRes, docRes] = await Promise.all([
+        apiService.getChatSessions({ limit: 100 }),
+        apiService.getDocuments({ limit: 50 }),
+      ]);
+      setSessionsList(sessRes.sessions);
+      setDocumentsList(docRes.documents);
+    } catch (err) {
+      console.error('Error fetching sidebar history/documents:', err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSidebarData();
+  }, [fetchSidebarData]);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -192,6 +224,141 @@ const Workspace: React.FC = () => {
     }
     setMessages([]);
     setQuestion('');
+    setSelectedSessionId(null);
+    setCurrentSessionId('sess_' + Date.now().toString(36));
+  };
+
+  // Continue working from a previous passage session tab (restores entire thread of all questions)
+  const handleSelectSession = async (session: ChatSessionItem) => {
+    setSelectedSessionId(session.session_id);
+    setCurrentSessionId(session.session_id);
+
+    // 1. Set mode and context/document
+    if (session.task_type === 'pdf_qa' || session.task_type === 'pdf_extract') {
+      setMode('pdf');
+      if (session.document_id) {
+        try {
+          const blob = await apiService.getDocumentBlob(session.document_id);
+          const file = new File([blob], session.document_name || 'document.pdf', {
+            type: 'application/pdf',
+          });
+          setPdfFile(file);
+        } catch {
+          if (session.document_name) {
+            setPdfFile(new File([''], session.document_name, { type: 'application/pdf' }));
+          }
+        }
+      } else if (session.document_name) {
+        setPdfFile(new File([''], session.document_name, { type: 'application/pdf' }));
+      }
+    } else {
+      setMode('passage');
+      if (session.context_preview) {
+        setContext(session.context_preview);
+      }
+    }
+
+    // 2. Load all past questions & answers in this passage session thread
+    try {
+      setLoading(true);
+      const tasks = await apiService.getSessionMessages(session.session_id);
+      const chatMsgs: ChatMessage[] = [];
+      tasks.forEach((t) => {
+        chatMsgs.push({
+          id: 'user-' + t.id,
+          role: 'user',
+          question: t.question,
+          mode: t.task_type === 'pdf_qa' ? 'pdf' : 'passage',
+          targetDocName: t.document_name || 'Passage Context',
+          timestamp: new Date(t.created_at).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+        });
+
+        chatMsgs.push({
+          id: 'resp-' + t.id,
+          role: 'assistant',
+          mode: t.task_type === 'pdf_qa' ? 'pdf' : 'passage',
+          targetDocName: t.document_name || 'Passage Context',
+          result: {
+            answer: t.answer || '',
+            descriptive_answer: t.descriptive_answer,
+            answers: t.citations,
+            is_answerable: t.is_answerable,
+            confidence_score: t.confidence_score,
+            page_number: t.page_number,
+            total_pages: 1,
+            matched_passage: t.context_preview,
+            filename: t.document_name || '',
+            start_char: 0,
+            end_char: 0,
+            model_version: 'squad2.0',
+            execution_time_ms: t.execution_time_ms,
+          } as any,
+          timestamp: new Date(t.created_at).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+        });
+      });
+      setMessages(chatMsgs);
+      setQuestion(session.latest_question || '');
+    } catch (err) {
+      console.error('Failed to load session conversation thread:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Delete entire passage session tab
+  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    try {
+      await apiService.deleteChatSession(sessionId);
+      setSessionsList((prev) => prev.filter((s) => s.session_id !== sessionId));
+      if (selectedSessionId === sessionId) {
+        handleNewChat();
+      }
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+    }
+  };
+
+
+  // Load document from vault into workspace for active questioning
+  const handleSelectVaultDoc = async (doc: DocumentItem) => {
+    try {
+      setLoading(true);
+      const blob = await apiService.getDocumentBlob(doc.id);
+      const file = new File([blob], doc.filename, { type: 'application/pdf' });
+      setPdfFile(file);
+      setMode('pdf');
+      setSelectedSessionId(null);
+      setQuestion('');
+      setMessages([
+        {
+          id: 'doc-loaded-' + Date.now(),
+          role: 'assistant',
+          mode: 'pdf',
+          targetDocName: doc.filename,
+          result: {
+            answer: `Loaded client document "${doc.filename}" (${doc.page_count} pages). You can now ask questions about it!`,
+            is_answerable: true,
+            confidence_score: 1.0,
+            start_char: 0,
+            end_char: 0,
+            model_version: 'vault-loader',
+            execution_time_ms: 0,
+          } as any,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+    } catch (err) {
+      console.error('Failed to load document from vault:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -246,7 +413,12 @@ const Workspace: React.FC = () => {
 
     try {
       if (mode === 'passage') {
-        const res = await apiService.predictAnswer({ context, question: q, top_k: topK });
+        const res = await apiService.predictAnswer({
+          context,
+          question: q,
+          top_k: topK,
+          session_id: currentSessionId,
+        });
         const assistantMsg: ChatMessage = {
           id: 'resp-' + Date.now(),
           role: 'assistant',
@@ -257,7 +429,7 @@ const Workspace: React.FC = () => {
         };
         setMessages((prev) => [...prev, assistantMsg]);
       } else {
-        const res = await apiService.predictPdfAnswer(pdfFile!, q, topK);
+        const res = await apiService.predictPdfAnswer(pdfFile!, q, topK, currentSessionId);
         const assistantMsg: ChatMessage = {
           id: 'resp-' + Date.now(),
           role: 'assistant',
@@ -288,6 +460,7 @@ const Workspace: React.FC = () => {
       setMessages((prev) => [...prev, assistantMsg]);
     } finally {
       setLoading(false);
+      fetchSidebarData();
     }
   };
 
@@ -378,40 +551,126 @@ const Workspace: React.FC = () => {
         </div>
       )}
 
-      {/* ── Left Sidebar (Clean & Focused) ────────────────────────── */}
+      {/* ── Left Sidebar (ChatGPT-Style Preserved History & Vault) ─── */}
       <aside
         className={`${
-          sidebarOpen ? 'w-64' : 'w-0'
+          sidebarOpen ? 'w-80' : 'w-0'
         } transition-all duration-300 ease-in-out bg-[#0B0F17] border-r border-white/10 flex flex-col flex-shrink-0 overflow-hidden relative z-20`}
       >
-        {/* Top: New Session */}
-        <div className="p-3 border-b border-white/10">
+        {/* Top: New Chat & Collapse Toggle */}
+        <div className="p-3 border-b border-white/10 flex items-center gap-2">
           <button
             type="button"
             onClick={handleNewChat}
-            className="w-full flex items-center justify-between px-3.5 py-2 bg-[#141C2E] hover:bg-[#1E293B] border border-white/10 rounded-xl text-xs font-semibold text-slate-200 transition-all"
+            className="flex-1 flex items-center justify-between px-3.5 py-2.5 bg-[#141C2E] hover:bg-[#1C263D] border border-white/10 hover:border-emerald-500/40 rounded-xl text-xs font-semibold text-slate-100 transition-all shadow-sm group"
+            title="Start new question or clean chat"
           >
             <span className="flex items-center gap-2">
-              <span className="text-emerald-400 font-bold text-sm">+</span>
-              New Chat
+              <span className="w-5 h-5 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-bold text-xs group-hover:scale-105 transition-transform">
+                +
+              </span>
+              <span>New Question</span>
             </span>
-            <span className="text-[10px] text-slate-400">Clear</span>
+            <span className="text-[10px] text-slate-400 font-mono">Clear</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(false)}
+            className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
+            title="Collapse sidebar"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+            </svg>
           </button>
         </div>
 
-        {/* Mode Selector */}
-        <div className="p-3 border-b border-white/10 space-y-2.5">
-          <div className="flex gap-1 p-1 bg-[#141C2E] rounded-lg border border-white/10">
+        {/* Search Input */}
+        <div className="px-3 pt-3">
+          <div className="relative">
+            <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </span>
+            <input
+              type="text"
+              value={historySearch}
+              onChange={(e) => setHistorySearch(e.target.value)}
+              placeholder="Search history & documents..."
+              className="w-full pl-8 pr-7 py-1.5 bg-[#141C2E]/70 border border-white/10 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
+            />
+            {historySearch && (
+              <button
+                type="button"
+                onClick={() => setHistorySearch('')}
+                className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-white text-xs"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Segmented Tab Switcher */}
+        <div className="px-3 pt-2.5">
+          <div className="flex gap-1 p-1 bg-[#141C2E] rounded-xl border border-white/10 text-[11px]">
             <button
               type="button"
-              onClick={() => setMode('passage')}
-              className={`flex-1 py-1 text-xs font-medium rounded-md transition-all ${
-                mode === 'passage'
-                  ? 'bg-emerald-600 text-white font-semibold'
+              onClick={() => setSidebarTab('history')}
+              className={`flex-1 py-1 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 ${
+                sidebarTab === 'history'
+                  ? 'bg-emerald-600 text-white font-semibold shadow-xs'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              Passage
+              <span>History</span>
+              <span className={`text-[10px] px-1 rounded-full ${sidebarTab === 'history' ? 'bg-emerald-700/80' : 'bg-white/10'}`}>
+                {sessionsList.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSidebarTab('documents')}
+              className={`flex-1 py-1 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 ${
+                sidebarTab === 'documents'
+                  ? 'bg-emerald-600 text-white font-semibold shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <span>Vault</span>
+              <span className={`text-[10px] px-1 rounded-full ${sidebarTab === 'documents' ? 'bg-emerald-700/80' : 'bg-white/10'}`}>
+                {documentsList.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSidebarTab('presets')}
+              className={`py-1 px-2.5 rounded-lg font-medium transition-all ${
+                sidebarTab === 'presets'
+                  ? 'bg-emerald-600 text-white font-semibold shadow-xs'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Presets
+            </button>
+          </div>
+        </div>
+
+        {/* Active Context / Mode Header */}
+        <div className="p-3 pb-2 border-b border-white/10 space-y-2">
+          <div className="flex gap-1 p-0.5 bg-[#141C2E]/80 rounded-lg border border-white/10 text-xs">
+            <button
+              type="button"
+              onClick={() => setMode('passage')}
+              className={`flex-1 py-1 text-center font-medium rounded-md transition-all ${
+                mode === 'passage'
+                  ? 'bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              📝 Text Passage
             </button>
             <button
               type="button"
@@ -419,95 +678,320 @@ const Workspace: React.FC = () => {
                 setMode('pdf');
                 if (!pdfFile) fileInputRef.current?.click();
               }}
-              className={`flex-1 py-1 text-xs font-medium rounded-md transition-all ${
+              className={`flex-1 py-1 text-center font-medium rounded-md transition-all ${
                 mode === 'pdf'
-                  ? 'bg-emerald-600 text-white font-semibold'
+                  ? 'bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              PDF
+              📄 PDF Doc
             </button>
           </div>
 
-          {/* Active Context Card */}
+          {/* Context Snippet */}
           {mode === 'passage' ? (
-            <div className="bg-[#141C2E]/60 border border-white/10 rounded-xl p-2.5 space-y-1.5">
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <span>Passage Context</span>
-                <button
-                  type="button"
-                  onClick={() => setIsEditingContext(true)}
-                  className="text-emerald-400 hover:underline font-medium"
-                >
-                  Edit
-                </button>
-              </div>
-              <p className="text-xs text-slate-300 line-clamp-2 leading-relaxed">
+            <div className="bg-[#141C2E]/60 border border-white/5 rounded-xl p-2 text-xs flex items-center justify-between">
+              <p className="text-[11px] text-slate-300 truncate max-w-[190px]">
                 "{context}"
               </p>
+              <button
+                type="button"
+                onClick={() => setIsEditingContext(true)}
+                className="text-emerald-400 hover:underline text-[11px] font-medium shrink-0 ml-1"
+              >
+                Edit
+              </button>
             </div>
           ) : (
-            <div className="bg-[#141C2E]/60 border border-white/10 rounded-xl p-2.5">
-              {pdfFile ? (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="truncate text-slate-200 font-medium">{pdfFile.name}</span>
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="text-emerald-400 text-[11px] hover:underline flex-shrink-0 ml-2"
-                  >
-                    Change
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full text-center py-2 text-xs text-emerald-400 hover:underline"
-                >
-                  + Upload PDF
-                </button>
-              )}
+            <div className="bg-[#141C2E]/60 border border-white/5 rounded-xl p-2 text-xs flex items-center justify-between">
+              <span className="truncate text-slate-200 text-[11px] font-medium max-w-[180px]">
+                {pdfFile ? pdfFile.name : 'No PDF selected'}
+              </span>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-emerald-400 hover:underline text-[11px] font-medium shrink-0 ml-1"
+              >
+                {pdfFile ? 'Change' : '+ Upload'}
+              </button>
             </div>
           )}
         </div>
 
-        {/* Quick Example Questions */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1">
-          <p className="text-[10px] font-mono font-semibold uppercase tracking-wider text-slate-400 px-1 py-1">
-            Example Queries
-          </p>
+        {/* ── TAB CONTENT (Scrollable middle container) ───────────────────────────────────────────── */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-3 min-h-0">
+          {/* TAB 1: HISTORY (ChatGPT-Style Grouped Timeline by Passage / Document) */}
+          {sidebarTab === 'history' && (
+            <div>
+              {historyLoading && sessionsList.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400 space-y-2">
+                  <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                  <span>Loading past conversations...</span>
+                </div>
+              ) : sessionsList.length === 0 ? (
+                <div className="py-8 px-3 text-center text-xs text-slate-400 space-y-2">
+                  <span className="text-2xl block">💬</span>
+                  <p className="font-semibold text-slate-300">No History Yet</p>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Ask any question on a passage or document. Questions on the same passage will be grouped together into a single tab!
+                  </p>
+                </div>
+              ) : (
+                (() => {
+                  const filtered = sessionsList.filter((item) => {
+                    if (!historySearch.trim()) return true;
+                    const q = historySearch.toLowerCase();
+                    return (
+                      (item.title && item.title.toLowerCase().includes(q)) ||
+                      (item.latest_question && item.latest_question.toLowerCase().includes(q)) ||
+                      (item.latest_answer && item.latest_answer.toLowerCase().includes(q)) ||
+                      (item.document_name && item.document_name.toLowerCase().includes(q))
+                    );
+                  });
 
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="py-8 text-center text-xs text-slate-400">
+                        No matches for "{historySearch}"
+                      </div>
+                    );
+                  }
+
+                  // Date bucket grouping
+                  const now = new Date();
+                  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+                  const yesterdayMidnight = todayMidnight - 86400000;
+                  const sevenDaysMidnight = todayMidnight - 7 * 86400000;
+
+                  const groups: { [key: string]: typeof sessionsList } = {
+                    Today: [],
+                    Yesterday: [],
+                    'Previous 7 Days': [],
+                    Older: [],
+                  };
+
+                  filtered.forEach((item) => {
+                    const t = new Date(item.updated_at).getTime();
+                    if (t >= todayMidnight) groups.Today.push(item);
+                    else if (t >= yesterdayMidnight) groups.Yesterday.push(item);
+                    else if (t >= sevenDaysMidnight) groups['Previous 7 Days'].push(item);
+                    else groups.Older.push(item);
+                  });
+
+                  return Object.entries(groups).map(([groupTitle, items]) => {
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={groupTitle} className="space-y-1 mb-3">
+                        <div className="px-2 py-1 text-[10px] font-mono font-semibold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                          <span>{groupTitle}</span>
+                          <span className="text-[9px] text-slate-400">{items.length}</span>
+                        </div>
+                        {items.map((session) => {
+                          const isSelected = selectedSessionId === session.session_id;
+                          return (
+                            <div
+                              key={session.session_id}
+                              onClick={() => handleSelectSession(session)}
+                              className={`group relative p-2.5 rounded-xl text-left transition-all cursor-pointer border ${
+                                isSelected
+                                  ? 'bg-emerald-950/40 border-emerald-500/40 text-white shadow-sm'
+                                  : 'border-transparent hover:bg-[#141C2E] hover:border-white/5 text-slate-300 hover:text-white'
+                              }`}
+                            >
+                              <div className="flex items-start gap-2">
+                                <span className="text-xs shrink-0 mt-0.5">
+                                  {session.task_type === 'pdf_qa' ? '📄' : '📝'}
+                                </span>
+                                <div className="flex-1 min-w-0 pr-6">
+                                  <div className="flex items-center gap-1.5 justify-between">
+                                    <p className="text-xs font-semibold truncate text-slate-200 group-hover:text-white" title={session.title}>
+                                      {session.title || 'Passage Discussion'}
+                                    </p>
+                                    <span className="text-[10px] bg-white/10 text-slate-300 px-1.5 py-0.5 rounded-full shrink-0 font-mono">
+                                      {session.messages_count} {session.messages_count === 1 ? 'Q' : 'Qs'}
+                                    </span>
+                                  </div>
+
+                                  {session.latest_question && (
+                                    <p className="text-[11px] text-slate-400 truncate mt-1">
+                                      <span className="text-emerald-400 font-medium">Q:</span> {session.latest_question}
+                                    </p>
+                                  )}
+
+                                  {session.latest_answer && (
+                                    <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                                      <span className="text-teal-400 font-medium">A:</span> {session.latest_answer}
+                                    </p>
+                                  )}
+
+                                  <div className="flex items-center gap-1.5 mt-1.5 text-[10px]">
+                                    {session.document_name && (
+                                      <span className="text-teal-400 font-mono truncate max-w-[110px]">
+                                        {session.document_name}
+                                      </span>
+                                    )}
+                                    {session.latest_confidence > 0 && (
+                                      <span className="text-emerald-400 font-mono font-bold">
+                                        {(session.latest_confidence * 100).toFixed(0)}%
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Hover Delete Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteSession(e, session.session_id)}
+                                className="absolute top-2 right-2 p-1 text-slate-400 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity rounded hover:bg-rose-950/30"
+                                title="Delete entire passage thread"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  });
+                })()
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: CLIENT DOCUMENT VAULT */}
+          {sidebarTab === 'documents' && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[10px] font-mono uppercase text-slate-400 tracking-wider">
+                  Client Documents ({documentsList.length})
+                </span>
+                <label className="cursor-pointer text-[11px] text-emerald-400 hover:underline font-semibold flex items-center gap-1">
+                  <span>+ Upload</span>
+                  <input
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {documentsList.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400 space-y-1">
+                  <span className="text-2xl block">📁</span>
+                  <p className="font-semibold text-slate-300">Vault Empty</p>
+                  <p className="text-[11px] text-slate-400">
+                    Upload client PDFs to query them repeatedly anytime.
+                  </p>
+                </div>
+              ) : (
+                documentsList.map((doc) => {
+                  const isCurrent = mode === 'pdf' && pdfFile?.name === doc.filename;
+                  return (
+                    <div
+                      key={doc.id}
+                      onClick={() => handleSelectVaultDoc(doc)}
+                      className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                        isCurrent
+                          ? 'bg-teal-950/40 border-teal-500/50 text-white shadow-sm'
+                          : 'bg-[#141C2E]/40 border-white/5 hover:border-teal-500/30 text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className="text-teal-400 mt-0.5 text-xs">📄</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold truncate" title={doc.filename}>
+                            {doc.filename}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400">
+                            <span>{doc.page_count} pages</span>
+                            <span>•</span>
+                            <span>{Math.round(doc.file_size / 1024)} KB</span>
+                          </div>
+                        </div>
+                        {isCurrent && (
+                          <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: QUICK PRESETS */}
+          {sidebarTab === 'presets' && (
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-mono uppercase text-slate-400 tracking-wider px-1">
+                Instant Demo Queries
+              </p>
+              <button
+                type="button"
+                onClick={() => loadPreset('pdf-revenue')}
+                className="w-full text-left p-2 rounded-xl text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all border border-transparent hover:border-white/5"
+              >
+                <span className="font-semibold block text-slate-200">📄 PDF Revenue Query</span>
+                <span className="text-[11px] text-slate-400 truncate block mt-0.5">
+                  "What was the total revenue in fiscal year 2024?"
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => loadPreset('apple')}
+                className="w-full text-left p-2 rounded-xl text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all border border-transparent hover:border-white/5"
+              >
+                <span className="font-semibold block text-slate-200">👥 Apple Founders (Multi-Span)</span>
+                <span className="text-[11px] text-slate-400 truncate block mt-0.5">
+                  "Who were the founders of Apple?"
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => loadPreset('table')}
+                className="w-full text-left p-2 rounded-xl text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all border border-transparent hover:border-white/5"
+              >
+                <span className="font-semibold block text-slate-200">📊 CSV Price Check</span>
+                <span className="text-[11px] text-slate-400 truncate block mt-0.5">
+                  "What is the price of iPhone 15 Pro?"
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => loadPreset('unanswerable')}
+                className="w-full text-left p-2 rounded-xl text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all border border-transparent hover:border-white/5"
+              >
+                <span className="font-semibold block text-slate-200">🛡️ Abstention / Null Test</span>
+                <span className="text-[11px] text-slate-400 truncate block mt-0.5">
+                  "What caused the 2024 earthquake?"
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Bottom Sidebar: Vault Manager Link */}
+        <div className="p-3 border-t border-white/10 bg-[#070A0F]/60">
           <button
             type="button"
-            onClick={() => loadPreset('pdf-revenue')}
-            className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all truncate"
+            onClick={() => navigate('/history')}
+            className="w-full flex items-center justify-between px-3 py-2 bg-[#141C2E]/60 hover:bg-[#141C2E] border border-white/5 hover:border-white/15 rounded-xl text-xs text-slate-300 hover:text-white transition-all"
           >
-            📄 PDF: Total Revenue
-          </button>
-
-          <button
-            type="button"
-            onClick={() => loadPreset('apple')}
-            className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all truncate"
-          >
-            👥 Apple Founders (Multi-Span)
-          </button>
-
-          <button
-            type="button"
-            onClick={() => loadPreset('table')}
-            className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all truncate"
-          >
-            📊 CSV Table: iPhone Price
-          </button>
-
-          <button
-            type="button"
-            onClick={() => loadPreset('unanswerable')}
-            className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all truncate"
-          >
-            🛡️ SQuAD Abstention Test
+            <span className="flex items-center gap-2">
+              <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>Full History & Vault Manager</span>
+            </span>
+            <span className="text-slate-400">→</span>
           </button>
         </div>
       </aside>
@@ -527,6 +1011,18 @@ const Workspace: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
               </svg>
             </button>
+
+            {!sidebarOpen && (
+              <button
+                type="button"
+                onClick={handleNewChat}
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-[#141C2E] hover:bg-[#1C263D] border border-white/10 rounded-lg text-xs font-medium text-slate-200 transition-colors"
+                title="New Question"
+              >
+                <span className="text-emerald-400 font-bold">+</span>
+                <span className="hidden sm:inline">New Question</span>
+              </button>
+            )}
 
             {/* Active Document Indicator Pill */}
             <button
@@ -675,20 +1171,20 @@ const Workspace: React.FC = () => {
                           {msg.result?.is_answerable && (
                             <button
                               type="button"
-                              onClick={() => handleSpeak(msg.result?.answer || '', msg.id)}
+                              onClick={() => handleSpeak(msg.result?.descriptive_answer || msg.result?.answer || '', msg.id)}
                               className={`p-1 rounded hover:bg-white/5 transition-colors ${
                                 speakingId === msg.id ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-white'
                               }`}
-                              title="Read aloud"
+                              title="Read aloud descriptive answer"
                             >
                               🔊
                             </button>
                           )}
                           <button
                             type="button"
-                            onClick={() => handleCopy(msg.result?.answer || '', msg.id)}
+                            onClick={() => handleCopy(msg.result?.descriptive_answer || msg.result?.answer || '', msg.id)}
                             className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5 transition-colors text-xs font-mono"
-                            title="Copy answer"
+                            title="Copy descriptive answer"
                           >
                             {copiedId === msg.id ? (
                               <span className="text-emerald-400 font-bold">✓</span>
@@ -704,14 +1200,38 @@ const Workspace: React.FC = () => {
                       {/* Main Answer Text */}
                       <div>
                         {msg.result?.is_answerable ? (
-                          <div>
-                            <p className="text-lg sm:text-xl font-bold text-white tracking-tight leading-snug">
-                              {msg.result.answer}
-                            </p>
+                          <div className="space-y-3">
+                            {/* Descriptive Answer Card */}
+                            {msg.result.descriptive_answer ? (
+                              <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-950/40 via-[#162238] to-[#121a2c] border border-emerald-500/25 shadow-inner">
+                                <div className="flex items-center justify-between mb-1.5">
+                                  <span className="text-[10px] font-mono font-semibold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                    Descriptive Answer
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 font-sans">
+                                    Full sentence context
+                                  </span>
+                                </div>
+                                <p className="text-sm sm:text-[15px] text-slate-100 font-normal leading-relaxed">
+                                  {msg.result.descriptive_answer}
+                                </p>
+                              </div>
+                            ) : null}
+
+                            {/* Direct Key Fact Span */}
+                            <div className="flex items-baseline gap-2 pt-0.5">
+                              <span className="text-[11px] font-mono text-slate-400 uppercase tracking-wide flex-shrink-0">
+                                Direct Answer:
+                              </span>
+                              <span className="text-base sm:text-lg font-bold text-white tracking-tight leading-snug">
+                                {msg.result.answer}
+                              </span>
+                            </div>
 
                             {/* Multi-span chips if multiple */}
                             {msg.result.answers && msg.result.answers.length > 1 && (
-                              <div className="flex flex-wrap gap-1.5 mt-2.5">
+                              <div className="flex flex-wrap gap-1.5 pt-1">
                                 {msg.result.answers.map((ans, aIdx) => (
                                   <span
                                     key={aIdx}

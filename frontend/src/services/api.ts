@@ -1,5 +1,22 @@
 import axios, { AxiosInstance } from 'axios';
-import { QARequest, QAResponse, LoginRequest, AuthToken, HealthResponse, MetricsResponse, PDFQAResponse, PDFExtractResponse } from '../types';
+import {
+  QARequest,
+  QAResponse,
+  LoginRequest,
+  AuthToken,
+  SendOTPResponse,
+  HealthResponse,
+  MetricsResponse,
+  PDFQAResponse,
+  PDFExtractResponse,
+  DocumentItem,
+  DocumentListResponse,
+  TaskHistoryItem,
+  TaskHistoryListResponse,
+  HistoryStats,
+  ChatSessionItem,
+  ChatSessionListResponse,
+} from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 const API_V1_PREFIX = '/api/v1';
@@ -17,24 +34,8 @@ class ApiService {
 
     // Add request interceptor to include auth token
     this.api.interceptors.request.use(
-      async (config) => {
-        let token = localStorage.getItem('token');
-        if (!token) {
-          try {
-            const resp = await axios.post(`${API_BASE_URL}${API_V1_PREFIX}/auth/login`, {
-              username: 'analyst',
-              password: 'password123',
-            });
-            const fetchedToken = resp.data?.access_token;
-            if (fetchedToken) {
-              token = fetchedToken;
-              localStorage.setItem('token', fetchedToken);
-              localStorage.setItem('username', 'analyst');
-            }
-          } catch (e) {
-            // ignore
-          }
-        }
+      (config) => {
+        const token = localStorage.getItem('token');
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
         }
@@ -43,29 +44,16 @@ class ApiService {
       (error) => Promise.reject(error)
     );
 
-    // Add response interceptor for error handling without login redirects
+    // Add response interceptor for 401 handling
     this.api.interceptors.response.use(
       (response) => response,
-      async (error) => {
-        const originalRequest = error.config;
-        if (
-          error.response?.status === 401 &&
-          !originalRequest?._retry &&
-          !originalRequest?.url?.includes('/auth/login')
-        ) {
-          originalRequest._retry = true;
-          try {
-            const resp = await axios.post(`${API_BASE_URL}${API_V1_PREFIX}/auth/login`, {
-              username: 'analyst',
-              password: 'password123',
-            });
-            const newToken = resp.data.access_token;
-            localStorage.setItem('token', newToken);
-            localStorage.setItem('username', 'analyst');
-            originalRequest.headers.Authorization = `Bearer ${newToken}`;
-            return this.api(originalRequest);
-          } catch (loginErr) {
-            return Promise.reject(loginErr);
+      (error) => {
+        if (error.response?.status === 401 && !error.config?.url?.includes('/auth/')) {
+          localStorage.removeItem('token');
+          localStorage.removeItem('username');
+          localStorage.removeItem('email');
+          if (window.location.pathname !== '/login') {
+            window.location.href = '/login';
           }
         }
         return Promise.reject(error);
@@ -85,6 +73,17 @@ class ApiService {
     return response.data;
   }
 
+  // Email OTP Authentication
+  async sendOtp(email: string): Promise<SendOTPResponse> {
+    const response = await this.api.post(`${API_V1_PREFIX}/auth/send-otp`, { email });
+    return response.data;
+  }
+
+  async verifyOtp(email: string, otp: string): Promise<AuthToken> {
+    const response = await this.api.post(`${API_V1_PREFIX}/auth/verify-otp`, { email, otp });
+    return response.data;
+  }
+
   // Question Answering
   async predictAnswer(request: QARequest): Promise<QAResponse> {
     const response = await this.api.post(`${API_V1_PREFIX}/qa/predict`, request);
@@ -92,11 +91,14 @@ class ApiService {
   }
 
   // PDF Question Answering
-  async predictPdfAnswer(file: File, question: string, topK: number = 1): Promise<PDFQAResponse> {
+  async predictPdfAnswer(file: File, question: string, topK: number = 1, sessionId?: string): Promise<PDFQAResponse> {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('question', question);
     formData.append('top_k', topK.toString());
+    if (sessionId) {
+      formData.append('session_id', sessionId);
+    }
 
     const response = await this.api.post(`${API_V1_PREFIX}/qa/predict-pdf`, formData, {
       headers: {
@@ -122,6 +124,89 @@ class ApiService {
   // Analytics
   async getMetrics(): Promise<MetricsResponse> {
     const response = await this.api.get(`${API_V1_PREFIX}/analytics/metrics`);
+    return response.data;
+  }
+
+  // ── User Task History ──────────────────────────────────────────────────────
+  async getHistory(params?: {
+    task_type?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<TaskHistoryListResponse> {
+    const response = await this.api.get(`${API_V1_PREFIX}/history`, { params });
+    return response.data;
+  }
+
+  async getHistoryStats(): Promise<HistoryStats> {
+    const response = await this.api.get(`${API_V1_PREFIX}/history/stats`);
+    return response.data;
+  }
+
+  async deleteHistoryItem(historyId: string): Promise<any> {
+    const response = await this.api.delete(`${API_V1_PREFIX}/history/${historyId}`);
+    return response.data;
+  }
+
+  async clearHistory(): Promise<any> {
+    const response = await this.api.delete(`${API_V1_PREFIX}/history`);
+    return response.data;
+  }
+
+  // ── Passage & Document Grouped Sessions ────────────────────────────────────
+  async getChatSessions(params?: { limit?: number; offset?: number }): Promise<ChatSessionListResponse> {
+    const response = await this.api.get(`${API_V1_PREFIX}/history/sessions`, { params });
+    return response.data;
+  }
+
+  async getSessionMessages(sessionId: string): Promise<TaskHistoryItem[]> {
+    const response = await this.api.get(`${API_V1_PREFIX}/history/sessions/${sessionId}`);
+    return response.data;
+  }
+
+  async deleteChatSession(sessionId: string): Promise<any> {
+    const response = await this.api.delete(`${API_V1_PREFIX}/history/sessions/${sessionId}`);
+    return response.data;
+  }
+
+  // ── Client Document Vault ──────────────────────────────────────────────────
+  async getDocuments(params?: { limit?: number; offset?: number }): Promise<DocumentListResponse> {
+    const response = await this.api.get(`${API_V1_PREFIX}/documents`, { params });
+    return response.data;
+  }
+
+  async uploadDocument(file: File): Promise<DocumentItem> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await this.api.post(`${API_V1_PREFIX}/documents/upload`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  }
+
+  async downloadDocument(docId: string, filename: string): Promise<void> {
+    const response = await this.api.get(`${API_V1_PREFIX}/documents/${docId}/download`, {
+      responseType: 'blob',
+    });
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  }
+
+  async getDocumentBlob(docId: string): Promise<Blob> {
+    const response = await this.api.get(`${API_V1_PREFIX}/documents/${docId}/download`, {
+      responseType: 'blob',
+    });
+    return new Blob([response.data]);
+  }
+
+  async deleteDocument(docId: string): Promise<any> {
+    const response = await this.api.delete(`${API_V1_PREFIX}/documents/${docId}`);
     return response.data;
   }
 }

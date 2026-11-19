@@ -134,6 +134,7 @@ class PDFService:
             exec_time = (time.time() - start_time) * 1000
             return {
                 "answer": "",
+                "descriptive_answer": None,
                 "answers": [],
                 "is_answerable": False,
                 "confidence_score": 0.0,
@@ -150,6 +151,7 @@ class PDFService:
             exec_time = (time.time() - start_time) * 1000
             return {
                 "answer": "",
+                "descriptive_answer": None,
                 "answers": [],
                 "is_answerable": False,
                 "confidence_score": 0.0,
@@ -194,6 +196,7 @@ class PDFService:
         if best_result and best_result.get("is_answerable"):
             return {
                 "answer": best_result.get("answer", ""),
+                "descriptive_answer": best_result.get("descriptive_answer", None),
                 "answers": best_result.get("answers", []),
                 "is_answerable": True,
                 "confidence_score": best_result.get("confidence_score", 0.0),
@@ -208,6 +211,7 @@ class PDFService:
         # If unanswerable
         return {
             "answer": "",
+            "descriptive_answer": None,
             "answers": [],
             "is_answerable": False,
             "confidence_score": 0.0,
