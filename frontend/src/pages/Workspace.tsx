@@ -1,7 +1,9 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useRef, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { apiService } from '../services/api';
-import { AnswerSpan, QAResponse, PDFQAResponse, TaskHistoryItem, DocumentItem, ChatSessionItem } from '../types';
+import { AnswerSpan, QAResponse, PDFQAResponse, DocumentItem, ChatSessionItem } from '../types';
+import Sidebar from '../components/Sidebar';
+import { useSidebar } from '../context/SidebarContext';
 
 interface ChatMessage {
   id: string;
@@ -135,7 +137,8 @@ const HighlightedText: React.FC<{
 
 /* ── Main Clean Workspace ─────────────────────────────────────────────── */
 const Workspace: React.FC = () => {
-  const navigate = useNavigate();
+  const location = useLocation();
+  const { sidebarOpen, setSidebarOpen, fetchSidebarData } = useSidebar();
 
   // Mode & Context
   const [mode, setMode] = useState<'passage' | 'pdf'>('passage');
@@ -152,13 +155,7 @@ const Workspace: React.FC = () => {
   const [expandedSnippetId, setExpandedSnippetId] = useState<string | null>(null);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
 
-  // ChatGPT-style Passage Session & Documents Sidebar State
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarTab, setSidebarTab] = useState<'history' | 'documents' | 'presets'>('history');
-  const [sessionsList, setSessionsList] = useState<ChatSessionItem[]>([]);
-  const [documentsList, setDocumentsList] = useState<DocumentItem[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historySearch, setHistorySearch] = useState('');
+  // ChatGPT-style Passage Session State
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => 'sess_' + Date.now().toString(36));
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
@@ -168,26 +165,6 @@ const Workspace: React.FC = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch passage conversation sessions and documents for sidebar
-  const fetchSidebarData = useCallback(async () => {
-    try {
-      setHistoryLoading(true);
-      const [sessRes, docRes] = await Promise.all([
-        apiService.getChatSessions({ limit: 100 }),
-        apiService.getDocuments({ limit: 50 }),
-      ]);
-      setSessionsList(sessRes.sessions);
-      setDocumentsList(docRes.documents);
-    } catch (err) {
-      console.error('Error fetching sidebar history/documents:', err);
-    } finally {
-      setHistoryLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchSidebarData();
-  }, [fetchSidebarData]);
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -311,21 +288,6 @@ const Workspace: React.FC = () => {
     }
   };
 
-  // Delete entire passage session tab
-  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation();
-    try {
-      await apiService.deleteChatSession(sessionId);
-      setSessionsList((prev) => prev.filter((s) => s.session_id !== sessionId));
-      if (selectedSessionId === sessionId) {
-        handleNewChat();
-      }
-    } catch (err) {
-      console.error('Failed to delete session:', err);
-    }
-  };
-
-
   // Load document from vault into workspace for active questioning
   const handleSelectVaultDoc = async (doc: DocumentItem) => {
     try {
@@ -360,6 +322,18 @@ const Workspace: React.FC = () => {
       setLoading(false);
     }
   };
+
+  // Listen for navigation state when arriving from other pages
+  useEffect(() => {
+    if (location.state?.session) {
+      handleSelectSession(location.state.session);
+    } else if (location.state?.doc) {
+      handleSelectVaultDoc(location.state.doc);
+    } else if (location.state?.newChat) {
+      handleNewChat();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -533,8 +507,7 @@ const Workspace: React.FC = () => {
       }}
       onDragLeave={() => setIsDragging(false)}
       onDrop={handleDrop}
-      className="flex-1 flex overflow-hidden relative bg-[#070A0F] text-slate-100"
-      style={{ height: 'calc(100vh - 3.5rem)' }}
+      className="flex-1 flex h-full w-full overflow-hidden relative bg-[#070A0F] text-slate-100 min-h-0"
     >
       <input
         ref={fileInputRef}
@@ -552,452 +525,15 @@ const Workspace: React.FC = () => {
       )}
 
       {/* ── Left Sidebar (ChatGPT-Style Preserved History & Vault) ─── */}
-      <aside
-        className={`${
-          sidebarOpen ? 'w-80' : 'w-0'
-        } transition-all duration-300 ease-in-out bg-[#0B0F17] border-r border-white/10 flex flex-col flex-shrink-0 overflow-hidden relative z-20`}
-      >
-        {/* Top: New Chat & Collapse Toggle */}
-        <div className="p-3 border-b border-white/10 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleNewChat}
-            className="flex-1 flex items-center justify-between px-3.5 py-2.5 bg-[#141C2E] hover:bg-[#1C263D] border border-white/10 hover:border-emerald-500/40 rounded-xl text-xs font-semibold text-slate-100 transition-all shadow-sm group"
-            title="Start new question or clean chat"
-          >
-            <span className="flex items-center gap-2">
-              <span className="w-5 h-5 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-bold text-xs group-hover:scale-105 transition-transform">
-                +
-              </span>
-              <span>New Question</span>
-            </span>
-            <span className="text-[10px] text-slate-400 font-mono">Clear</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSidebarOpen(false)}
-            className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
-            title="Collapse sidebar"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Search Input */}
-        <div className="px-3 pt-3">
-          <div className="relative">
-            <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </span>
-            <input
-              type="text"
-              value={historySearch}
-              onChange={(e) => setHistorySearch(e.target.value)}
-              placeholder="Search history & documents..."
-              className="w-full pl-8 pr-7 py-1.5 bg-[#141C2E]/70 border border-white/10 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
-            />
-            {historySearch && (
-              <button
-                type="button"
-                onClick={() => setHistorySearch('')}
-                className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-white text-xs"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Segmented Tab Switcher */}
-        <div className="px-3 pt-2.5">
-          <div className="flex gap-1 p-1 bg-[#141C2E] rounded-xl border border-white/10 text-[11px]">
-            <button
-              type="button"
-              onClick={() => setSidebarTab('history')}
-              className={`flex-1 py-1 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 ${
-                sidebarTab === 'history'
-                  ? 'bg-emerald-600 text-white font-semibold shadow-xs'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <span>History</span>
-              <span className={`text-[10px] px-1 rounded-full ${sidebarTab === 'history' ? 'bg-emerald-700/80' : 'bg-white/10'}`}>
-                {sessionsList.length}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setSidebarTab('documents')}
-              className={`flex-1 py-1 rounded-lg font-medium transition-all flex items-center justify-center gap-1.5 ${
-                sidebarTab === 'documents'
-                  ? 'bg-emerald-600 text-white font-semibold shadow-xs'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <span>Vault</span>
-              <span className={`text-[10px] px-1 rounded-full ${sidebarTab === 'documents' ? 'bg-emerald-700/80' : 'bg-white/10'}`}>
-                {documentsList.length}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setSidebarTab('presets')}
-              className={`py-1 px-2.5 rounded-lg font-medium transition-all ${
-                sidebarTab === 'presets'
-                  ? 'bg-emerald-600 text-white font-semibold shadow-xs'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Presets
-            </button>
-          </div>
-        </div>
-
-        {/* Active Context / Mode Header */}
-        <div className="p-3 pb-2 border-b border-white/10 space-y-2">
-          <div className="flex gap-1 p-0.5 bg-[#141C2E]/80 rounded-lg border border-white/10 text-xs">
-            <button
-              type="button"
-              onClick={() => setMode('passage')}
-              className={`flex-1 py-1 text-center font-medium rounded-md transition-all ${
-                mode === 'passage'
-                  ? 'bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              📝 Text Passage
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode('pdf');
-                if (!pdfFile) fileInputRef.current?.click();
-              }}
-              className={`flex-1 py-1 text-center font-medium rounded-md transition-all ${
-                mode === 'pdf'
-                  ? 'bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              📄 PDF Doc
-            </button>
-          </div>
-
-          {/* Context Snippet */}
-          {mode === 'passage' ? (
-            <div className="bg-[#141C2E]/60 border border-white/5 rounded-xl p-2 text-xs flex items-center justify-between">
-              <p className="text-[11px] text-slate-300 truncate max-w-[190px]">
-                "{context}"
-              </p>
-              <button
-                type="button"
-                onClick={() => setIsEditingContext(true)}
-                className="text-emerald-400 hover:underline text-[11px] font-medium shrink-0 ml-1"
-              >
-                Edit
-              </button>
-            </div>
-          ) : (
-            <div className="bg-[#141C2E]/60 border border-white/5 rounded-xl p-2 text-xs flex items-center justify-between">
-              <span className="truncate text-slate-200 text-[11px] font-medium max-w-[180px]">
-                {pdfFile ? pdfFile.name : 'No PDF selected'}
-              </span>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="text-emerald-400 hover:underline text-[11px] font-medium shrink-0 ml-1"
-              >
-                {pdfFile ? 'Change' : '+ Upload'}
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* ── TAB CONTENT (Scrollable middle container) ───────────────────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-3 min-h-0">
-          {/* TAB 1: HISTORY (ChatGPT-Style Grouped Timeline by Passage / Document) */}
-          {sidebarTab === 'history' && (
-            <div>
-              {historyLoading && sessionsList.length === 0 ? (
-                <div className="py-8 text-center text-xs text-slate-400 space-y-2">
-                  <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                  <span>Loading past conversations...</span>
-                </div>
-              ) : sessionsList.length === 0 ? (
-                <div className="py-8 px-3 text-center text-xs text-slate-400 space-y-2">
-                  <span className="text-2xl block">💬</span>
-                  <p className="font-semibold text-slate-300">No History Yet</p>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Ask any question on a passage or document. Questions on the same passage will be grouped together into a single tab!
-                  </p>
-                </div>
-              ) : (
-                (() => {
-                  const filtered = sessionsList.filter((item) => {
-                    if (!historySearch.trim()) return true;
-                    const q = historySearch.toLowerCase();
-                    return (
-                      (item.title && item.title.toLowerCase().includes(q)) ||
-                      (item.latest_question && item.latest_question.toLowerCase().includes(q)) ||
-                      (item.latest_answer && item.latest_answer.toLowerCase().includes(q)) ||
-                      (item.document_name && item.document_name.toLowerCase().includes(q))
-                    );
-                  });
-
-                  if (filtered.length === 0) {
-                    return (
-                      <div className="py-8 text-center text-xs text-slate-400">
-                        No matches for "{historySearch}"
-                      </div>
-                    );
-                  }
-
-                  // Date bucket grouping
-                  const now = new Date();
-                  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-                  const yesterdayMidnight = todayMidnight - 86400000;
-                  const sevenDaysMidnight = todayMidnight - 7 * 86400000;
-
-                  const groups: { [key: string]: typeof sessionsList } = {
-                    Today: [],
-                    Yesterday: [],
-                    'Previous 7 Days': [],
-                    Older: [],
-                  };
-
-                  filtered.forEach((item) => {
-                    const t = new Date(item.updated_at).getTime();
-                    if (t >= todayMidnight) groups.Today.push(item);
-                    else if (t >= yesterdayMidnight) groups.Yesterday.push(item);
-                    else if (t >= sevenDaysMidnight) groups['Previous 7 Days'].push(item);
-                    else groups.Older.push(item);
-                  });
-
-                  return Object.entries(groups).map(([groupTitle, items]) => {
-                    if (items.length === 0) return null;
-                    return (
-                      <div key={groupTitle} className="space-y-1 mb-3">
-                        <div className="px-2 py-1 text-[10px] font-mono font-semibold uppercase tracking-wider text-slate-400 flex items-center justify-between">
-                          <span>{groupTitle}</span>
-                          <span className="text-[9px] text-slate-400">{items.length}</span>
-                        </div>
-                        {items.map((session) => {
-                          const isSelected = selectedSessionId === session.session_id;
-                          return (
-                            <div
-                              key={session.session_id}
-                              onClick={() => handleSelectSession(session)}
-                              className={`group relative p-2.5 rounded-xl text-left transition-all cursor-pointer border ${
-                                isSelected
-                                  ? 'bg-emerald-950/40 border-emerald-500/40 text-white shadow-sm'
-                                  : 'border-transparent hover:bg-[#141C2E] hover:border-white/5 text-slate-300 hover:text-white'
-                              }`}
-                            >
-                              <div className="flex items-start gap-2">
-                                <span className="text-xs shrink-0 mt-0.5">
-                                  {session.task_type === 'pdf_qa' ? '📄' : '📝'}
-                                </span>
-                                <div className="flex-1 min-w-0 pr-6">
-                                  <div className="flex items-center gap-1.5 justify-between">
-                                    <p className="text-xs font-semibold truncate text-slate-200 group-hover:text-white" title={session.title}>
-                                      {session.title || 'Passage Discussion'}
-                                    </p>
-                                    <span className="text-[10px] bg-white/10 text-slate-300 px-1.5 py-0.5 rounded-full shrink-0 font-mono">
-                                      {session.messages_count} {session.messages_count === 1 ? 'Q' : 'Qs'}
-                                    </span>
-                                  </div>
-
-                                  {session.latest_question && (
-                                    <p className="text-[11px] text-slate-400 truncate mt-1">
-                                      <span className="text-emerald-400 font-medium">Q:</span> {session.latest_question}
-                                    </p>
-                                  )}
-
-                                  {session.latest_answer && (
-                                    <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                                      <span className="text-teal-400 font-medium">A:</span> {session.latest_answer}
-                                    </p>
-                                  )}
-
-                                  <div className="flex items-center gap-1.5 mt-1.5 text-[10px]">
-                                    {session.document_name && (
-                                      <span className="text-teal-400 font-mono truncate max-w-[110px]">
-                                        {session.document_name}
-                                      </span>
-                                    )}
-                                    {session.latest_confidence > 0 && (
-                                      <span className="text-emerald-400 font-mono font-bold">
-                                        {(session.latest_confidence * 100).toFixed(0)}%
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Hover Delete Button */}
-                              <button
-                                type="button"
-                                onClick={(e) => handleDeleteSession(e, session.session_id)}
-                                className="absolute top-2 right-2 p-1 text-slate-400 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity rounded hover:bg-rose-950/30"
-                                title="Delete entire passage thread"
-                              >
-                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  });
-                })()
-              )}
-            </div>
-          )}
-
-          {/* TAB 2: CLIENT DOCUMENT VAULT */}
-          {sidebarTab === 'documents' && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-[10px] font-mono uppercase text-slate-400 tracking-wider">
-                  Client Documents ({documentsList.length})
-                </span>
-                <label className="cursor-pointer text-[11px] text-emerald-400 hover:underline font-semibold flex items-center gap-1">
-                  <span>+ Upload</span>
-                  <input
-                    type="file"
-                    accept=".pdf,application/pdf"
-                    onChange={handleFileChange}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-
-              {documentsList.length === 0 ? (
-                <div className="py-8 text-center text-xs text-slate-400 space-y-1">
-                  <span className="text-2xl block">📁</span>
-                  <p className="font-semibold text-slate-300">Vault Empty</p>
-                  <p className="text-[11px] text-slate-400">
-                    Upload client PDFs to query them repeatedly anytime.
-                  </p>
-                </div>
-              ) : (
-                documentsList.map((doc) => {
-                  const isCurrent = mode === 'pdf' && pdfFile?.name === doc.filename;
-                  return (
-                    <div
-                      key={doc.id}
-                      onClick={() => handleSelectVaultDoc(doc)}
-                      className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                        isCurrent
-                          ? 'bg-teal-950/40 border-teal-500/50 text-white shadow-sm'
-                          : 'bg-[#141C2E]/40 border-white/5 hover:border-teal-500/30 text-slate-300 hover:text-white'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2">
-                        <span className="text-teal-400 mt-0.5 text-xs">📄</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold truncate" title={doc.filename}>
-                            {doc.filename}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400">
-                            <span>{doc.page_count} pages</span>
-                            <span>•</span>
-                            <span>{Math.round(doc.file_size / 1024)} KB</span>
-                          </div>
-                        </div>
-                        {isCurrent && (
-                          <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded">
-                            Active
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          )}
-
-          {/* TAB 3: QUICK PRESETS */}
-          {sidebarTab === 'presets' && (
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-mono uppercase text-slate-400 tracking-wider px-1">
-                Instant Demo Queries
-              </p>
-              <button
-                type="button"
-                onClick={() => loadPreset('pdf-revenue')}
-                className="w-full text-left p-2 rounded-xl text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all border border-transparent hover:border-white/5"
-              >
-                <span className="font-semibold block text-slate-200">📄 PDF Revenue Query</span>
-                <span className="text-[11px] text-slate-400 truncate block mt-0.5">
-                  "What was the total revenue in fiscal year 2024?"
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => loadPreset('apple')}
-                className="w-full text-left p-2 rounded-xl text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all border border-transparent hover:border-white/5"
-              >
-                <span className="font-semibold block text-slate-200">👥 Apple Founders (Multi-Span)</span>
-                <span className="text-[11px] text-slate-400 truncate block mt-0.5">
-                  "Who were the founders of Apple?"
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => loadPreset('table')}
-                className="w-full text-left p-2 rounded-xl text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all border border-transparent hover:border-white/5"
-              >
-                <span className="font-semibold block text-slate-200">📊 CSV Price Check</span>
-                <span className="text-[11px] text-slate-400 truncate block mt-0.5">
-                  "What is the price of iPhone 15 Pro?"
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => loadPreset('unanswerable')}
-                className="w-full text-left p-2 rounded-xl text-xs text-slate-300 hover:bg-[#141C2E] hover:text-white transition-all border border-transparent hover:border-white/5"
-              >
-                <span className="font-semibold block text-slate-200">🛡️ Abstention / Null Test</span>
-                <span className="text-[11px] text-slate-400 truncate block mt-0.5">
-                  "What caused the 2024 earthquake?"
-                </span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Bottom Sidebar: Vault Manager Link */}
-        <div className="p-3 border-t border-white/10 bg-[#070A0F]/60">
-          <button
-            type="button"
-            onClick={() => navigate('/history')}
-            className="w-full flex items-center justify-between px-3 py-2 bg-[#141C2E]/60 hover:bg-[#141C2E] border border-white/5 hover:border-white/15 rounded-xl text-xs text-slate-300 hover:text-white transition-all"
-          >
-            <span className="flex items-center gap-2">
-              <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>Full History & Vault Manager</span>
-            </span>
-            <span className="text-slate-400">→</span>
-          </button>
-        </div>
-      </aside>
+      <Sidebar
+        selectedSessionId={selectedSessionId}
+        onSelectSession={handleSelectSession}
+        onSelectVaultDoc={handleSelectVaultDoc}
+        onNewChat={handleNewChat}
+      />
 
       {/* ── Main Chat Canvas ───────────────────────────────────────── */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-[#070A0F] relative">
+      <main className="flex-1 flex flex-col h-full overflow-hidden bg-[#070A0F] relative min-w-0 min-h-0">
         {/* Top Header Bar */}
         <div className="h-12 px-4 border-b border-white/10 flex items-center justify-between flex-shrink-0 bg-[#0B0F17]/90 backdrop-blur-xl z-10">
           <div className="flex items-center gap-3">
@@ -1075,7 +611,7 @@ const Workspace: React.FC = () => {
         </div>
 
         {/* Chat Feed */}
-        <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div className="flex-1 overflow-y-auto px-4 py-6 min-h-0">
           <div className="max-w-3xl mx-auto space-y-6">
             {/* Empty State */}
             {messages.length === 0 && (
@@ -1310,15 +846,18 @@ const Workspace: React.FC = () => {
           </div>
         </div>
 
-        {/* ── Bottom Input Pill (Clean & Minimal) ────────────────────── */}
-        <div className="p-4 bg-[#070A0F]">
-          <div className="max-w-3xl mx-auto">
-            <div className="relative bg-[#141C2E] border border-white/10 focus-within:border-emerald-500/60 rounded-2xl shadow-xl transition-all p-1.5 flex items-center gap-2">
+        {/* ── Bottom Input Pill (FROZEN / PINNED LIKE GEMINI) ─────────── */}
+        <div className="flex-shrink-0 relative bg-[#070A0F] pt-2 pb-4 px-4 z-20">
+          {/* Soft upward gradient overlay so messages smoothly disappear behind the frozen search box */}
+          <div className="pointer-events-none absolute -top-8 left-0 right-0 h-8 bg-gradient-to-t from-[#070A0F] to-transparent" />
+
+          <div className="max-w-3xl mx-auto space-y-2">
+            <div className="relative bg-[#141C2E]/95 backdrop-blur-xl border border-white/10 focus-within:border-emerald-500/50 focus-within:ring-2 focus-within:ring-emerald-500/20 rounded-[28px] shadow-2xl transition-all p-2 flex items-center gap-2">
               {/* Attachment */}
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
+                className="p-2.5 text-slate-400 hover:text-white rounded-full hover:bg-white/5 transition-colors shrink-0"
                 title="Upload PDF document"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1336,11 +875,11 @@ const Workspace: React.FC = () => {
                 placeholder={
                   mode === 'pdf'
                     ? pdfFile
-                      ? `Ask about ${pdfFile.name}…`
+                      ? `Ask anything about ${pdfFile.name}…`
                       : 'Upload a PDF to ask questions…'
-                    : 'Ask a question about the passage…'
+                    : 'Ask anything about the passage context…'
                 }
-                className="flex-1 bg-transparent text-sm text-slate-100 placeholder-slate-400 resize-none focus:outline-none px-2 py-1 max-h-28"
+                className="flex-1 bg-transparent text-sm text-slate-100 placeholder-slate-400 resize-none focus:outline-none px-2 py-1.5 max-h-32"
               />
 
               {/* Send Button */}
@@ -1348,14 +887,14 @@ const Workspace: React.FC = () => {
                 type="button"
                 onClick={() => handleSend()}
                 disabled={loading || !question.trim()}
-                className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${
+                className={`w-9 h-9 rounded-full flex items-center justify-center transition-all shrink-0 ${
                   question.trim() && !loading
-                    ? 'bg-emerald-500 text-slate-950 font-bold hover:brightness-110'
+                    ? 'bg-emerald-500 text-slate-950 font-bold hover:brightness-110 shadow-lg shadow-emerald-500/20'
                     : 'bg-slate-800 text-slate-500 opacity-40 cursor-not-allowed'
                 }`}
                 aria-label="Send query"
               >
-                <svg className="w-3.5 h-3.5 transform rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-4 h-4 transform rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                 </svg>
               </button>

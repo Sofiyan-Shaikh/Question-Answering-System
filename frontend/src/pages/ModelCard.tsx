@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PageWithSidebar from '../components/PageWithSidebar';
 
 const KeyValueRow: React.FC<{ k: string; v: string }> = ({ k, v }) => (
   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 py-3 border-b border-white/5 last:border-0 text-xs">
@@ -33,8 +34,9 @@ start_scores, end_scores = outputs.start_logits, outputs.end_logits
   };
 
   return (
-    <div className="min-h-screen bg-[#0B0F17] text-slate-100 py-10 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
-      {/* Background ambient glows */}
+    <PageWithSidebar>
+      <div className="min-h-full py-10 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
+        {/* Background ambient glows */}
       <div className="ambient-glow-emerald w-96 h-96 top-10 left-1/3 -z-10 opacity-30"></div>
       <div className="ambient-glow-blue w-96 h-96 bottom-10 right-1/4 -z-10 opacity-20"></div>
 
@@ -273,6 +275,7 @@ start_scores, end_scores = outputs.start_logits, outputs.end_logits
         )}
       </div>
     </div>
+    </PageWithSidebar>
   );
 };
 

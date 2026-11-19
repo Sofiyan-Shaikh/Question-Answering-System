@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { SidebarProvider } from './context/SidebarContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import Navbar from './components/Navbar';
 import Home from './pages/Home';
@@ -13,12 +14,12 @@ import History from './pages/History';
 
 const AppContent: React.FC = () => {
   const location = useLocation();
-  const isWorkspace = location.pathname === '/workspace';
+  const isAppPage = location.pathname !== '/' && location.pathname !== '/login';
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0B0F17] text-slate-100 antialiased">
+    <div className={`flex flex-col bg-[#0B0F17] text-slate-100 antialiased ${isAppPage ? 'h-screen overflow-hidden' : 'min-h-screen'}`}>
       <Navbar />
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="flex-1 flex flex-col overflow-hidden min-h-0 w-full">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
@@ -65,7 +66,7 @@ const AppContent: React.FC = () => {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
-      {!isWorkspace && (
+      {!isAppPage && (
         <footer className="bg-[#070A0F] border-t border-white/5 py-3 px-6 text-center text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between max-w-7xl mx-auto w-full">
           <span>BERT SQuAD 2.0 Extractive QA</span>
           <span className="text-[11px] text-slate-400 mt-1 sm:mt-0">FastAPI · PyTorch · React</span>
@@ -79,7 +80,9 @@ const App: React.FC = () => {
   return (
     <AuthProvider>
       <Router>
-        <AppContent />
+        <SidebarProvider>
+          <AppContent />
+        </SidebarProvider>
       </Router>
     </AuthProvider>
   );

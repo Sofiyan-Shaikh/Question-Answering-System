@@ -6,6 +6,7 @@ import {
 } from 'recharts';
 import { apiService } from '../services/api';
 import { MetricsResponse } from '../types';
+import PageWithSidebar from '../components/PageWithSidebar';
 
 /* ── Static chart data ─────────────────────────────────────────────────── */
 const QUESTION_TYPE_DATA = [
@@ -129,8 +130,9 @@ const Analytics: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#0B0F17] text-slate-100 py-10 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
-      {/* Background ambient glows */}
+    <PageWithSidebar>
+      <div className="min-h-full py-10 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
+        {/* Background ambient glows */}
       <div className="ambient-glow-emerald w-96 h-96 top-10 right-1/4 -z-10 opacity-30"></div>
       <div className="ambient-glow-blue w-96 h-96 bottom-20 left-1/4 -z-10 opacity-20"></div>
 
@@ -427,6 +429,7 @@ const Analytics: React.FC = () => {
         </div>
       </div>
     </div>
+    </PageWithSidebar>
   );
 };
 

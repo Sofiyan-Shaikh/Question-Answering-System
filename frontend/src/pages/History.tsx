@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiService } from '../services/api';
 import { TaskHistoryItem, DocumentItem, HistoryStats } from '../types';
+import PageWithSidebar from '../components/PageWithSidebar';
 
 const History: React.FC = () => {
   const navigate = useNavigate();
@@ -254,7 +255,8 @@ const History: React.FC = () => {
   };
 
   return (
-    <div className="min-h-full flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
+    <PageWithSidebar>
+      <div className="min-h-full flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
       {/* Toast Alert */}
       {actionMessage && (
         <div
@@ -821,7 +823,8 @@ const History: React.FC = () => {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </PageWithSidebar>
   );
 };
 

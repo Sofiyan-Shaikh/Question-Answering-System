@@ -14,7 +14,6 @@ import {
   TaskHistoryItem,
   TaskHistoryListResponse,
   HistoryStats,
-  ChatSessionItem,
   ChatSessionListResponse,
 } from '../types';
 
