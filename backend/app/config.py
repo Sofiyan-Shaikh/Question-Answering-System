@@ -1,4 +1,6 @@
 """Configuration settings for the QA System"""
+from typing import Union
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -39,7 +41,15 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = True
     
     # CORS
-    BACKEND_CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:8000"]
+    FRONTEND_URL: str = ""
+    BACKEND_CORS_ORIGINS: Union[list[str], str] = ["http://localhost:3000", "http://localhost:8000"]
+
+    @field_validator("BACKEND_CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            return [origin.strip().rstrip("/") for origin in v.split(",") if origin.strip()]
+        return v
     
     # Device Configuration
     DEVICE: str = "cpu"  # Can be changed to "cuda" if GPU available

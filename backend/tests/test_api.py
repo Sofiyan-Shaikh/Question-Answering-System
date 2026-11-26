@@ -72,6 +72,17 @@ class TestAuthEndpoint:
         assert "access_token" in data
         assert data["token_type"] == "bearer"
 
+    def test_login_with_email_success(self):
+        resp = client.post(
+            "/api/v1/auth/login",
+            json={"email": "analyst@qasystem.com", "password": "password123"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "access_token" in data
+        assert data["email"] == "analyst@qasystem.com"
+        assert data["username"] == "analyst"
+
     def test_login_wrong_password(self):
         resp = client.post(
             "/api/v1/auth/login",

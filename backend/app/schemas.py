@@ -1,5 +1,5 @@
 """Pydantic schemas for request/response validation"""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Any
 
 
@@ -57,30 +57,16 @@ class QAResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """Login request schema"""
-    username: str = Field(..., min_length=1)
+    """Login request schema (supports email or username)"""
+    email: Optional[str] = Field(default=None, min_length=1)
+    username: Optional[str] = Field(default=None, min_length=1)
     password: str = Field(..., min_length=1)
 
-
-class SendOTPRequest(BaseModel):
-    """Email OTP send request schema"""
-    email: str = Field(..., min_length=3, max_length=255, description="Target email address")
-
-
-class SendOTPResponse(BaseModel):
-    """Email OTP send response schema"""
-    success: bool = Field(default=True, description="Whether OTP was generated and sent successfully")
-    message: str = Field(..., description="Status message")
-    email: str = Field(..., description="Target email address")
-    expires_in_seconds: int = Field(default=300, description="OTP validity duration in seconds")
-    cooldown_seconds: int = Field(default=60, description="Wait time before next resend is allowed")
-    dev_otp: Optional[str] = Field(default=None, description="Convenience OTP preview for development environments")
-
-
-class VerifyOTPRequest(BaseModel):
-    """Email OTP verification request schema"""
-    email: str = Field(..., min_length=3, max_length=255, description="Target email address")
-    otp: str = Field(..., min_length=6, max_length=6, description="6-digit verification code")
+    @model_validator(mode="after")
+    def validate_identifier(self):
+        if not (self.email and self.email.strip()) and not (self.username and self.username.strip()):
+            raise ValueError("Email or username is required")
+        return self
 
 
 class Token(BaseModel):

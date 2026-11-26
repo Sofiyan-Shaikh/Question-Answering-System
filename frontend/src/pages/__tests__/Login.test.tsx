@@ -6,11 +6,8 @@ import Login from '../Login';
 import { apiService } from '../../services/api';
 import { AuthProvider } from '../../context/AuthContext';
 
-// Mock apiService methods
 jest.mock('../../services/api', () => ({
   apiService: {
-    sendOtp: jest.fn(),
-    verifyOtp: jest.fn(),
     login: jest.fn(),
   },
 }));
@@ -25,82 +22,38 @@ const renderLogin = () => {
   );
 };
 
-describe('Login Component - Email OTP Flow', () => {
+describe('Login Component - Email & Password Flow', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  test('renders with Email OTP mode selected by default', () => {
+  test('renders simple email and password login form without OTP', () => {
     renderLogin();
 
-    // Verify Brand title & tabs
     expect(screen.getByText(/Question Answering Engine/i)).toBeInTheDocument();
-    expect(screen.getByText(/Email OTP/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/e.g. analyst@qasystem.com/i)).toBeInTheDocument();
-    expect(screen.getByText(/Send 6-Digit Code/i)).toBeInTheDocument();
-  });
-
-  test('allows switching between Email OTP and Password tabs', () => {
-    renderLogin();
-
-    // Click Password tab
-    const passwordTab = screen.getByRole('button', { name: /password/i });
-    fireEvent.click(passwordTab);
-
-    // Verify Password form elements appear
-    expect(screen.getByLabelText(/^Username$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Email$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^Password$/i)).toBeInTheDocument();
-
-    // Click Email OTP tab back
-    const otpTab = screen.getByRole('button', { name: /email otp/i });
-    fireEvent.click(otpTab);
-
-    expect(screen.getByPlaceholderText(/e.g. analyst@qasystem.com/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sign In & Open Workspace/i })).toBeInTheDocument();
+    expect(screen.queryByText(/Email OTP/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Send 6-Digit Code/i)).not.toBeInTheDocument();
   });
 
-  test('sends OTP code and transitions to 6-digit OTP entry screen', async () => {
-    (apiService.sendOtp as jest.Mock).mockResolvedValueOnce({
-      success: true,
-      message: 'Verification code sent to analyst@qasystem.com.',
-      email: 'analyst@qasystem.com',
-      expires_in_seconds: 300,
-      cooldown_seconds: 60,
-      dev_otp: '789123',
-    });
-
+  test('allows toggling password visibility and filling demo accounts', () => {
     renderLogin();
 
-    const emailInput = screen.getByPlaceholderText(/e.g. analyst@qasystem.com/i);
-    fireEvent.change(emailInput, { target: { value: 'analyst@qasystem.com' } });
+    const passwordInput = screen.getByLabelText(/^Password$/i) as HTMLInputElement;
+    expect(passwordInput.type).toBe('password');
 
-    const sendBtn = screen.getByRole('button', { name: /Send 6-Digit Code/i });
-    fireEvent.click(sendBtn);
+    fireEvent.click(screen.getByRole('button', { name: /Show/i }));
+    expect(passwordInput.type).toBe('text');
 
-    await waitFor(() => {
-      expect(apiService.sendOtp).toHaveBeenCalledWith('analyst@qasystem.com');
-    });
-
-    // Check transition to Step 2
-    await waitFor(() => {
-      expect(screen.getAllByText(/Verification Code/i).length).toBeGreaterThan(0);
-      expect(screen.getByLabelText(/Digit 1/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Digit 6/i)).toBeInTheDocument();
-      expect(screen.getByText(/789123/i)).toBeInTheDocument(); // dev preview code
-      expect(screen.getByRole('button', { name: /Verify & Sign In/i })).toBeInTheDocument();
-    });
+    fireEvent.click(screen.getByText(/admin@qasystem\.com/i));
+    const emailInput = screen.getByLabelText(/^Email$/i) as HTMLInputElement;
+    expect(emailInput.value).toBe('admin@qasystem.com');
   });
 
-  test('verifies OTP code and signs in user', async () => {
-    (apiService.sendOtp as jest.Mock).mockResolvedValueOnce({
-      success: true,
-      message: 'Verification code sent to analyst@qasystem.com.',
-      email: 'analyst@qasystem.com',
-      expires_in_seconds: 300,
-      cooldown_seconds: 60,
-      dev_otp: '789123',
-    });
-
-    (apiService.verifyOtp as jest.Mock).mockResolvedValueOnce({
+  test('submits email and password to login API', async () => {
+    (apiService.login as jest.Mock).mockResolvedValueOnce({
       access_token: 'fake-jwt-token-123',
       token_type: 'bearer',
       email: 'analyst@qasystem.com',
@@ -109,21 +62,32 @@ describe('Login Component - Email OTP Flow', () => {
 
     renderLogin();
 
-    // 1. Send OTP
-    const emailInput = screen.getByPlaceholderText(/e.g. analyst@qasystem.com/i);
+    const emailInput = screen.getByLabelText(/^Email$/i);
+    const passwordInput = screen.getByLabelText(/^Password$/i);
+
     fireEvent.change(emailInput, { target: { value: 'analyst@qasystem.com' } });
-    fireEvent.click(screen.getByRole('button', { name: /Send 6-Digit Code/i }));
+    fireEvent.change(passwordInput, { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: /Sign In & Open Workspace/i }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/Digit 1/i)).toBeInTheDocument();
+      expect(apiService.login).toHaveBeenCalledWith({
+        email: 'analyst@qasystem.com',
+        password: 'password123',
+      });
+    });
+  });
+
+  test('displays error message when login fails', async () => {
+    (apiService.login as jest.Mock).mockRejectedValueOnce({
+      response: { data: { detail: 'Incorrect email or password' } },
     });
 
-    // 2. Click dev auto-fill & verify
-    const autoFillBtn = screen.getByText(/Click to auto-fill & verify instantly/i);
-    fireEvent.click(autoFillBtn);
+    renderLogin();
+
+    fireEvent.click(screen.getByRole('button', { name: /Sign In & Open Workspace/i }));
 
     await waitFor(() => {
-      expect(apiService.verifyOtp).toHaveBeenCalledWith('analyst@qasystem.com', '789123');
+      expect(screen.getByRole('alert')).toHaveTextContent('Incorrect email or password');
     });
   });
 });

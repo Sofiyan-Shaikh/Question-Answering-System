@@ -12,30 +12,35 @@ security = HTTPBearer()
 MOCK_USERS = {
     "analyst": {
         "username": "analyst",
+        "email": "analyst@qasystem.com",
         "passwords": ["password123", "password", "analyst"],
         "password": "password123",
         "role": "analyst"
     },
     "admin": {
         "username": "admin",
+        "email": "admin@qasystem.com",
         "passwords": ["password123", "admin", "password"],
         "password": "password123",
         "role": "admin"
     },
     "sofiyan": {
         "username": "sofiyan",
+        "email": "sofiyan@qasystem.com",
         "passwords": ["password123", "sofiyan", "admin", "password"],
         "password": "password123",
         "role": "admin"
     },
     "sofiyanshaikh": {
         "username": "sofiyanshaikh",
+        "email": "sofiyanshaikh@qasystem.com",
         "passwords": ["password123", "sofiyan", "admin", "password"],
         "password": "password123",
         "role": "admin"
     },
     "user": {
         "username": "user",
+        "email": "user@qasystem.com",
         "passwords": ["password123", "user", "password"],
         "password": "password123",
         "role": "analyst"
@@ -53,12 +58,17 @@ def verify_password(plain_password: str, user_record: dict) -> bool:
             return True
     return False
 
-def authenticate_user(username: str, password: str):
-    """Authenticate a user"""
-    if not username:
+def authenticate_user(identifier: str, password: str):
+    """Authenticate a user by username or email"""
+    if not identifier:
         return False
-    u_lower = username.strip().lower()
-    user = MOCK_USERS.get(u_lower)
+    clean_id = identifier.strip().lower()
+    user = MOCK_USERS.get(clean_id)
+    if user is None and "@" in clean_id:
+        user = next(
+            (record for record in MOCK_USERS.values() if record.get("email") == clean_id),
+            None,
+        )
     if user and verify_password(password, user):
         return user
     return False

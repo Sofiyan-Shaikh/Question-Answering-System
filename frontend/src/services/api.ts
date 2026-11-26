@@ -4,7 +4,6 @@ import {
   QAResponse,
   LoginRequest,
   AuthToken,
-  SendOTPResponse,
   HealthResponse,
   MetricsResponse,
   PDFQAResponse,
@@ -69,17 +68,6 @@ class ApiService {
   // Authentication
   async login(credentials: LoginRequest): Promise<AuthToken> {
     const response = await this.api.post(`${API_V1_PREFIX}/auth/login`, credentials);
-    return response.data;
-  }
-
-  // Email OTP Authentication
-  async sendOtp(email: string): Promise<SendOTPResponse> {
-    const response = await this.api.post(`${API_V1_PREFIX}/auth/send-otp`, { email });
-    return response.data;
-  }
-
-  async verifyOtp(email: string, otp: string): Promise<AuthToken> {
-    const response = await this.api.post(`${API_V1_PREFIX}/auth/verify-otp`, { email, otp });
     return response.data;
   }
 

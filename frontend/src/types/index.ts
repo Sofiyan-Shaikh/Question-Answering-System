@@ -56,26 +56,9 @@ export interface PDFQAResponse {
 }
 
 export interface LoginRequest {
-  username: string;
+  email?: string;
+  username?: string;
   password: string;
-}
-
-export interface SendOTPRequest {
-  email: string;
-}
-
-export interface SendOTPResponse {
-  success: boolean;
-  message: string;
-  email: string;
-  expires_in_seconds: number;
-  cooldown_seconds: number;
-  dev_otp?: string;
-}
-
-export interface VerifyOTPRequest {
-  email: string;
-  otp: string;
 }
 
 export interface AuthToken {
