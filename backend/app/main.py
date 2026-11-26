@@ -1,6 +1,7 @@
 """Main FastAPI application"""
 from contextlib import asynccontextmanager
 import os
+import threading
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -20,12 +21,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning: Database initialization error: {e}")
 
-    print("Loading QA model...")
-    try:
-        predictor.load_model()
-        print("Model loaded successfully!")
-    except Exception as e:
-        print(f"Warning: Could not load model: {e}")
+    def _load_model_bg():
+        print("Loading QA model in background...")
+        try:
+            predictor.load_model()
+            print("Model loaded successfully!")
+        except Exception as e:
+            print(f"Warning: Could not load model: {e}")
+
+    threading.Thread(target=_load_model_bg, daemon=True).start()
     yield
     print("Shutting down...")
 
