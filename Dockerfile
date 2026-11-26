@@ -32,8 +32,8 @@ COPY training/ ./training/
 # Copy built React assets into a location FastAPI can serve
 COPY --from=frontend-builder /app/frontend/build ./frontend/build
 
-# Artifacts directory (model weights mounted at runtime)
-RUN mkdir -p artifacts
+# Artifacts & writable data directories (HF Spaces runs as non-root UID 1000)
+RUN mkdir -p artifacts data/uploads && chmod -R 777 data
 
 # Environment
 ENV PYTHONUNBUFFERED=1 \

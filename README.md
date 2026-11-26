@@ -1,3 +1,13 @@
+---
+title: Question Answering System
+emoji: 🔍
+colorFrom: green
+colorTo: blue
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # Question Answering System — SQuAD 2.0
 
 A full-stack **extractive QA** application built with BERT, FastAPI, and React.
