@@ -1,7 +1,10 @@
 """Main FastAPI application"""
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .db import init_db
 from .services.predictor import predictor
@@ -57,11 +60,36 @@ app.include_router(history_routes.router, prefix=f"{settings.API_V1_PREFIX}/hist
 app.include_router(document_routes.router, prefix=f"{settings.API_V1_PREFIX}/documents", tags=["documents"])
 
 
+FRONTEND_BUILD_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "build")
+)
+FRONTEND_INDEX = os.path.join(FRONTEND_BUILD_DIR, "index.html")
+FRONTEND_STATIC = os.path.join(FRONTEND_BUILD_DIR, "static")
+
+if os.path.isdir(FRONTEND_STATIC):
+    app.mount("/static", StaticFiles(directory=FRONTEND_STATIC), name="static")
+
+
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Serve React frontend if built, otherwise return API status"""
+    if os.path.isfile(FRONTEND_INDEX):
+        return FileResponse(FRONTEND_INDEX)
     return {
         "message": "Question Answering System API",
         "version": settings.VERSION,
         "docs": "/docs"
     }
+
+
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    """Serve React SPA for non-API routes when frontend build is present"""
+    if full_path.startswith("api/") or full_path == "api":
+        raise HTTPException(status_code=404, detail="Not Found")
+    candidate = os.path.join(FRONTEND_BUILD_DIR, full_path)
+    if os.path.isfile(candidate):
+        return FileResponse(candidate)
+    if os.path.isfile(FRONTEND_INDEX):
+        return FileResponse(FRONTEND_INDEX)
+    raise HTTPException(status_code=404, detail="Not Found")

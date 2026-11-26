@@ -478,7 +478,12 @@ class QAPredictor:
             else:
                 model_dir = resolved_path
                 if not os.path.isdir(model_dir):
-                    model_dir = settings.BASE_MODEL_NAME
+                    # If MODEL_NAME is a Hugging Face repo ID (e.g. "deepset/bert-base-cased-squad2"),
+                    # use it directly; otherwise fall back to a fine-tuned SQuAD 2.0 checkpoint.
+                    if "/" in model_dir and not model_dir.endswith(".pkl"):
+                        pass
+                    else:
+                        model_dir = "deepset/bert-base-cased-squad2"
 
                 config_path = os.path.join(model_dir, "inference_config.json")
                 if os.path.exists(config_path):

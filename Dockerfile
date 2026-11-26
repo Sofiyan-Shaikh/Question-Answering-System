@@ -7,6 +7,7 @@ COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci --silent
 
 COPY frontend/ ./
+ENV REACT_APP_API_URL=""
 RUN npm run build
 
 
