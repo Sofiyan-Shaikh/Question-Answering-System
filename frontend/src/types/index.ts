@@ -51,6 +51,7 @@ export interface PDFQAResponse {
   total_pages: number;
   matched_passage?: string;
   filename: string;
+  document_id?: string;
   model_version: string;
   execution_time_ms: number;
 }
@@ -59,6 +60,22 @@ export interface LoginRequest {
   email?: string;
   username?: string;
   password: string;
+}
+
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  username?: string;
+  otp?: string;
+}
+
+export interface SendOTPResponse {
+  success: boolean;
+  message: string;
+  email: string;
+  expires_in_seconds: number;
+  cooldown_seconds: number;
+  dev_otp?: string;
 }
 
 export interface AuthToken {

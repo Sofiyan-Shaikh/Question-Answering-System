@@ -1,7 +1,7 @@
 """Question Answering routes with automated document vault and task history recording"""
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from ..schemas import QARequest, QAResponse, PDFQAResponse, PDFExtractResponse, PDFPageData
+from ..schemas import QARequest, QAResponse, PDFQAResponse, DocumentQARequest, PDFExtractResponse, PDFPageData
 from ..services.predictor import predictor
 from ..services.pdf_service import pdf_service
 from ..services.document_service import document_service
@@ -117,11 +117,64 @@ async def predict_pdf_answer(
         except Exception as log_err:
             print(f"Warning: Failed to record PDF QA history: {log_err}")
 
-        return PDFQAResponse(**result)
+        return PDFQAResponse(**result, document_id=doc_id)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF prediction error: {str(e)}")
+
+
+@router.post("/predict-document", response_model=PDFQAResponse)
+async def predict_document_answer(
+    request: DocumentQARequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Answer a follow-up question on an already-uploaded PDF document by document_id
+    without re-uploading the file.
+    """
+    user_id = current_user.get("username", "user")
+    doc = document_service.get_document(request.document_id, user_id=user_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    file_bytes = document_service.get_document_bytes(doc)
+    if not file_bytes:
+        raise HTTPException(status_code=404, detail="Document file is missing from storage")
+
+    try:
+        result = pdf_service.answer_question_from_pdf(
+            file_bytes=file_bytes,
+            filename=doc["filename"],
+            question=request.question.strip(),
+            top_k=request.top_k or 1,
+        )
+
+        try:
+            history_service.record_task(
+                user_id=user_id,
+                session_id=request.session_id,
+                task_type="pdf_qa",
+                document_id=request.document_id,
+                document_name=doc["filename"],
+                question=request.question.strip(),
+                context_preview=result.get("matched_passage"),
+                answer=result.get("answer"),
+                descriptive_answer=result.get("descriptive_answer"),
+                is_answerable=result.get("is_answerable", True),
+                confidence_score=result.get("confidence_score", 0.0),
+                page_number=result.get("page_number"),
+                citations=result.get("answers"),
+                execution_time_ms=result.get("execution_time_ms", 0.0),
+            )
+        except Exception as log_err:
+            print(f"Warning: Failed to record document QA history: {log_err}")
+
+        return PDFQAResponse(**result, document_id=request.document_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Document prediction error: {str(e)}")
 
 
 @router.post("/extract-pdf-text", response_model=PDFExtractResponse)

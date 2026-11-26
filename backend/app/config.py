@@ -1,7 +1,7 @@
 """Configuration settings for the QA System"""
 from typing import Union
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -63,9 +63,11 @@ class Settings(BaseSettings):
     DATABASE_PATH: str = "./data/qa_system.db"
     DATABASE_URL: str = ""  # If set, can point to postgresql://user:pass@host/dbname
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = SettingsConfigDict(
+        env_file=("backend/.env", ".env"),
+        case_sensitive=True,
+        extra="ignore",
+    )
 
 
 settings = Settings()

@@ -101,6 +101,25 @@ class TestAuthEndpoint:
         resp = client.post("/api/v1/auth/login", json={"username": "analyst"})
         assert resp.status_code == 422
 
+    def test_register_and_login_new_user(self):
+        import uuid
+        email = f"test_{uuid.uuid4().hex[:8]}@example.com"
+        reg_resp = client.post(
+            "/api/v1/auth/register",
+            json={"email": email, "password": "securepass123"},
+        )
+        assert reg_resp.status_code == 201
+        reg_data = reg_resp.json()
+        assert "access_token" in reg_data
+        assert reg_data["email"] == email
+
+        login_resp = client.post(
+            "/api/v1/auth/login",
+            json={"email": email, "password": "securepass123"},
+        )
+        assert login_resp.status_code == 200
+        assert "access_token" in login_resp.json()
+
 
 # ── QA Predict ────────────────────────────────────────────────────────────────
 

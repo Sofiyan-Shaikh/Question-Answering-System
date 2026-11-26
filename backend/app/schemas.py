@@ -69,6 +69,35 @@ class LoginRequest(BaseModel):
         return self
 
 
+class RegisterRequest(BaseModel):
+    """User registration request schema"""
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=6, max_length=128)
+    username: Optional[str] = Field(default=None, min_length=2, max_length=64)
+    otp: Optional[str] = Field(default=None, min_length=6, max_length=6)
+
+
+class SendOTPRequest(BaseModel):
+    """Email OTP send request schema"""
+    email: str = Field(..., min_length=3, max_length=255, description="Target email address")
+
+
+class SendOTPResponse(BaseModel):
+    """Email OTP send response schema"""
+    success: bool = Field(default=True, description="Whether OTP was generated and sent successfully")
+    message: str = Field(..., description="Status message")
+    email: str = Field(..., description="Target email address")
+    expires_in_seconds: int = Field(default=300, description="OTP validity duration in seconds")
+    cooldown_seconds: int = Field(default=60, description="Wait time before next resend is allowed")
+    dev_otp: Optional[str] = Field(default=None, description="Convenience OTP preview for development environments")
+
+
+class VerifyOTPRequest(BaseModel):
+    """Email OTP verification request schema"""
+    email: str = Field(..., min_length=3, max_length=255, description="Target email address")
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit verification code")
+
+
 class Token(BaseModel):
     """JWT token response"""
     access_token: str
@@ -120,8 +149,17 @@ class PDFQAResponse(BaseModel):
     total_pages: int = Field(..., description="Total pages in the PDF")
     matched_passage: Optional[str] = Field(default=None, description="Context excerpt containing the answer")
     filename: str = Field(..., description="Name of the PDF file")
+    document_id: Optional[str] = Field(default=None, description="Stored document ID for follow-up queries")
     model_version: str = Field(..., description="Model version identifier")
     execution_time_ms: float = Field(..., description="Execution time in milliseconds")
+
+
+class DocumentQARequest(BaseModel):
+    """Request schema for querying an already-uploaded PDF document by ID"""
+    document_id: str = Field(..., min_length=1, max_length=100)
+    question: str = Field(..., min_length=1, max_length=500)
+    top_k: Optional[int] = Field(default=1, ge=1, le=5)
+    session_id: Optional[str] = Field(default=None, max_length=100)
 
 
 # ── Document Vault Schemas ─────────────────────────────────────────────────────

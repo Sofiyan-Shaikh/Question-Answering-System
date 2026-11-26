@@ -1,8 +1,10 @@
 """PDF processing and Retrieval-Augmented QA service"""
+from collections import OrderedDict
+import hashlib
 import io
 import re
 import time
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from pypdf import PdfReader
 from rank_bm25 import BM25Okapi
 
@@ -11,6 +13,26 @@ from .predictor import predictor
 
 class PDFService:
     """Service to parse PDF documents, chunk pages, retrieve candidates, and answer questions."""
+
+    def __init__(self, max_cache_size: int = 32):
+        self._doc_cache: OrderedDict[str, Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]] = OrderedDict()
+        self._max_cache_size = max_cache_size
+
+    def _get_cached_pages_and_chunks(
+        self, file_bytes: bytes
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Return cached (pages, chunks) keyed by SHA-256 of file bytes."""
+        key = hashlib.sha256(file_bytes).hexdigest()
+        if key in self._doc_cache:
+            self._doc_cache.move_to_end(key)
+            return self._doc_cache[key]
+
+        pages = self.extract_pdf_pages(file_bytes)
+        chunks = self.chunk_document(pages) if pages else []
+        self._doc_cache[key] = (pages, chunks)
+        if len(self._doc_cache) > self._max_cache_size:
+            self._doc_cache.popitem(last=False)
+        return pages, chunks
 
     @staticmethod
     def extract_pdf_pages(file_bytes: bytes) -> List[Dict[str, Any]]:
@@ -125,29 +147,12 @@ class PDFService:
         5. Return top answer with page citation
         """
         start_time = time.time()
-        pages = self.extract_pdf_pages(file_bytes)
+        pages, chunks = self._get_cached_pages_and_chunks(file_bytes)
         total_pages = len(pages)
 
         # Check for empty or unscannable PDF
         total_chars = sum(p["char_count"] for p in pages)
-        if total_pages == 0 or total_chars == 0:
-            exec_time = (time.time() - start_time) * 1000
-            return {
-                "answer": "",
-                "descriptive_answer": None,
-                "answers": [],
-                "is_answerable": False,
-                "confidence_score": 0.0,
-                "page_number": None,
-                "total_pages": total_pages,
-                "matched_passage": None,
-                "filename": filename,
-                "model_version": predictor.model_version,
-                "execution_time_ms": round(exec_time, 2)
-            }
-
-        chunks = self.chunk_document(pages)
-        if not chunks:
+        if total_pages == 0 or total_chars == 0 or not chunks:
             exec_time = (time.time() - start_time) * 1000
             return {
                 "answer": "",

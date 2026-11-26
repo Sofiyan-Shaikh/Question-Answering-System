@@ -3,6 +3,8 @@ import {
   QARequest,
   QAResponse,
   LoginRequest,
+  RegisterRequest,
+  SendOTPResponse,
   AuthToken,
   HealthResponse,
   MetricsResponse,
@@ -71,6 +73,21 @@ class ApiService {
     return response.data;
   }
 
+  async register(data: RegisterRequest): Promise<AuthToken> {
+    const response = await this.api.post(`${API_V1_PREFIX}/auth/register`, data);
+    return response.data;
+  }
+
+  async sendOtp(email: string): Promise<SendOTPResponse> {
+    const response = await this.api.post(`${API_V1_PREFIX}/auth/send-otp`, { email });
+    return response.data;
+  }
+
+  async verifyOtp(email: string, otp: string): Promise<AuthToken> {
+    const response = await this.api.post(`${API_V1_PREFIX}/auth/verify-otp`, { email, otp });
+    return response.data;
+  }
+
   // Question Answering
   async predictAnswer(request: QARequest): Promise<QAResponse> {
     const response = await this.api.post(`${API_V1_PREFIX}/qa/predict`, request);
@@ -91,6 +108,22 @@ class ApiService {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+    });
+    return response.data;
+  }
+
+  // Follow-up Question Answering on an already-uploaded PDF by document_id
+  async predictDocumentAnswer(
+    documentId: string,
+    question: string,
+    topK: number = 1,
+    sessionId?: string
+  ): Promise<PDFQAResponse> {
+    const response = await this.api.post(`${API_V1_PREFIX}/qa/predict-document`, {
+      document_id: documentId,
+      question,
+      top_k: topK,
+      session_id: sessionId,
     });
     return response.data;
   }

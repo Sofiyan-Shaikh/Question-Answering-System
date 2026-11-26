@@ -45,6 +45,18 @@ def init_db():
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
+        # ── Users Table ────────────────────────────────────────────────────────
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT DEFAULT 'analyst',
+                created_at TEXT NOT NULL
+            );
+        """)
+
         # ── Documents Vault Table ──────────────────────────────────────────────
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS documents (
@@ -90,6 +102,8 @@ def init_db():
             cursor.execute("ALTER TABLE task_history ADD COLUMN session_id TEXT;")
 
         # ── Indexes for high-performance querying ──────────────────────────────
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_docs_user_created ON documents (user_id, created_at DESC);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_docs_sha256 ON documents (sha256);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_history_user_created ON task_history (user_id, created_at DESC);")

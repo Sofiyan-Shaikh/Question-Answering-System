@@ -15,46 +15,6 @@ interface ChatMessage {
   timestamp: string;
 }
 
-const EXAMPLE_CONTEXT =
-  'SQuAD 2.0 combines the 100,000 questions in SQuAD 1.1 with over 50,000 unanswerable questions written adversarially by crowdworkers to look like answerable ones. To do well on SQuAD 2.0, systems must not only answer questions when possible, but also determine when no answer is supported by the paragraph and abstain from answering.';
-
-const MULTI_EXAMPLE_CONTEXT =
-  'Apple Inc. was founded in 1976 by Steve Jobs, Steve Wozniak, and Ronald Wayne to develop and sell Wozniaks Apple I personal computer. The company was incorporated in January 1977 in Cupertino, California.';
-
-const TABLE_EXAMPLE_CONTEXT =
-  'Product, Category, Price, Stock\nMacBook Air, Laptop, $999, 45\niPhone 15 Pro, Smartphone, $1199, 120\nApple Watch Ultra, Wearable, $799, 30';
-
-// Demo in-memory 2-page PDF
-const createDemoPdf = (): File => {
-  const content = `%PDF-1.4
-1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
-2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
-3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >> endobj
-4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >> endobj
-5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
-6 0 obj << /Length 135 >> stream
-BT /F1 12 Tf 50 700 Td (Page 1: Annual Performance Overview) Tj 0 -25 Td (The company achieved total revenue of $4.8 billion in fiscal year 2024.) Tj ET
-endstream endobj
-7 0 obj << /Length 145 >> stream
-BT /F1 12 Tf 50 700 Td (Page 2: Executive Leadership & Headcount) Tj 0 -25 Td (Dr. Elena Vance serves as Chief Technology Officer overseeing 1,200 engineers.) Tj ET
-endstream endobj
-xref
-0 8
-0000000000 65535 f 
-0000000009 00000 n 
-0000000062 00000 n 
-0000000129 00000 n 
-0000000257 00000 n 
-0000000385 00000 n 
-0000000459 00000 n 
-0000000647 00000 n 
-trailer << /Size 8 /Root 1 0 R >>
-startxref
-845
-%%EOF`;
-  return new File([content], 'annual_report_2024.pdf', { type: 'application/pdf' });
-};
-
 /* ── Highlighted Passage Component ────────────────────────────────────── */
 const HighlightedText: React.FC<{
   context: string;
@@ -142,8 +102,10 @@ const Workspace: React.FC = () => {
 
   // Mode & Context
   const [mode, setMode] = useState<'passage' | 'pdf'>('passage');
-  const [context, setContext] = useState<string>(EXAMPLE_CONTEXT);
+  const [context, setContext] = useState<string>('');
   const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
+  const [activeDocumentName, setActiveDocumentName] = useState<string | null>(null);
   const [isEditingContext, setIsEditingContext] = useState(false);
 
   // Interaction
@@ -288,39 +250,32 @@ const Workspace: React.FC = () => {
     }
   };
 
-  // Load document from vault into workspace for active questioning
+  // Load document from vault into workspace for active questioning (no re-download/re-upload needed)
   const handleSelectVaultDoc = async (doc: DocumentItem) => {
-    try {
-      setLoading(true);
-      const blob = await apiService.getDocumentBlob(doc.id);
-      const file = new File([blob], doc.filename, { type: 'application/pdf' });
-      setPdfFile(file);
-      setMode('pdf');
-      setSelectedSessionId(null);
-      setQuestion('');
-      setMessages([
-        {
-          id: 'doc-loaded-' + Date.now(),
-          role: 'assistant',
-          mode: 'pdf',
-          targetDocName: doc.filename,
-          result: {
-            answer: `Loaded client document "${doc.filename}" (${doc.page_count} pages). You can now ask questions about it!`,
-            is_answerable: true,
-            confidence_score: 1.0,
-            start_char: 0,
-            end_char: 0,
-            model_version: 'vault-loader',
-            execution_time_ms: 0,
-          } as any,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        },
-      ]);
-    } catch (err) {
-      console.error('Failed to load document from vault:', err);
-    } finally {
-      setLoading(false);
-    }
+    setPdfFile(null);
+    setActiveDocumentId(doc.id);
+    setActiveDocumentName(doc.filename);
+    setMode('pdf');
+    setSelectedSessionId(null);
+    setQuestion('');
+    setMessages([
+      {
+        id: 'doc-loaded-' + Date.now(),
+        role: 'assistant',
+        mode: 'pdf',
+        targetDocName: doc.filename,
+        result: {
+          answer: `Loaded "${doc.filename}" (${doc.page_count} pages). Ask any question below.`,
+          is_answerable: true,
+          confidence_score: 1.0,
+          start_char: 0,
+          end_char: 0,
+          model_version: 'vault-loader',
+          execution_time_ms: 0,
+        } as any,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      },
+    ]);
   };
 
   // Listen for navigation state when arriving from other pages
@@ -340,6 +295,8 @@ const Workspace: React.FC = () => {
       const file = e.target.files[0];
       if (file.name.toLowerCase().endsWith('.pdf')) {
         setPdfFile(file);
+        setActiveDocumentId(null);
+        setActiveDocumentName(file.name);
         setMode('pdf');
       }
     }
@@ -352,6 +309,8 @@ const Workspace: React.FC = () => {
       const file = e.dataTransfer.files[0];
       if (file.name.toLowerCase().endsWith('.pdf')) {
         setPdfFile(file);
+        setActiveDocumentId(null);
+        setActiveDocumentName(file.name);
         setMode('pdf');
       }
     }
@@ -366,12 +325,12 @@ const Workspace: React.FC = () => {
       setIsEditingContext(true);
       return;
     }
-    if (mode === 'pdf' && !pdfFile) {
+    if (mode === 'pdf' && !pdfFile && !activeDocumentId) {
       fileInputRef.current?.click();
       return;
     }
 
-    const targetDoc = mode === 'pdf' ? (pdfFile?.name || 'document.pdf') : 'Passage Context';
+    const targetDoc = mode === 'pdf' ? (activeDocumentName || pdfFile?.name || 'document.pdf') : 'Passage Context';
     const userMsg: ChatMessage = {
       id: 'msg-' + Date.now(),
       role: 'user',
@@ -403,7 +362,14 @@ const Workspace: React.FC = () => {
         };
         setMessages((prev) => [...prev, assistantMsg]);
       } else {
-        const res = await apiService.predictPdfAnswer(pdfFile!, q, topK, currentSessionId);
+        const res = activeDocumentId
+          ? await apiService.predictDocumentAnswer(activeDocumentId, q, topK, currentSessionId)
+          : await apiService.predictPdfAnswer(pdfFile!, q, topK, currentSessionId);
+
+        if (res.document_id && !activeDocumentId) {
+          setActiveDocumentId(res.document_id);
+          setActiveDocumentName(res.filename);
+        }
         const assistantMsg: ChatMessage = {
           id: 'resp-' + Date.now(),
           role: 'assistant',
@@ -472,31 +438,6 @@ const Workspace: React.FC = () => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  // Presets
-  const loadPreset = (type: 'pdf-revenue' | 'apple' | 'table' | 'unanswerable') => {
-    if (type === 'pdf-revenue') {
-      const file = createDemoPdf();
-      setPdfFile(file);
-      setMode('pdf');
-      handleSend('What was the total revenue in fiscal year 2024?');
-    } else if (type === 'apple') {
-      setContext(MULTI_EXAMPLE_CONTEXT);
-      setMode('passage');
-      setTopK(3);
-      handleSend('Who were the founders of Apple?');
-    } else if (type === 'table') {
-      setContext(TABLE_EXAMPLE_CONTEXT);
-      setMode('passage');
-      setTopK(1);
-      handleSend('What is the price of iPhone 15 Pro?');
-    } else if (type === 'unanswerable') {
-      setContext(EXAMPLE_CONTEXT);
-      setMode('passage');
-      setTopK(1);
-      handleSend('What caused the 2024 earthquake?');
-    }
   };
 
   return (
@@ -570,7 +511,7 @@ const Workspace: React.FC = () => {
               className="flex items-center gap-2 text-xs font-medium text-slate-300 hover:text-white bg-[#141C2E] hover:bg-[#1E293B] border border-white/10 px-3 py-1 rounded-full transition-colors"
             >
               <span>{mode === 'pdf' ? '📄' : '📝'}</span>
-              <span className="truncate max-w-xs">{mode === 'pdf' ? (pdfFile?.name || 'Select PDF') : 'Passage Context'}</span>
+              <span className="truncate max-w-xs">{mode === 'pdf' ? (activeDocumentName || pdfFile?.name || 'Select PDF') : 'Passage Context'}</span>
             </button>
           </div>
 
@@ -615,46 +556,33 @@ const Workspace: React.FC = () => {
           <div className="max-w-3xl mx-auto space-y-6">
             {/* Empty State */}
             {messages.length === 0 && (
-              <div className="pt-16 pb-6 flex flex-col items-center text-center fade-in">
-                <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-white text-2xl shadow-lg mb-4">
-                  ✨
+              <div className="pt-20 pb-6 flex flex-col items-center text-center fade-in">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-white text-xl font-bold shadow-lg mb-4">
+                  Q
                 </div>
                 <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">
-                  Ask anything about your document
+                  Ask a question about your document
                 </h2>
-                <p className="text-xs text-slate-400 max-w-sm mb-8">
-                  Verbatim answer extraction and unanswerable query detection.
+                <p className="text-xs text-slate-400 max-w-md mb-6 leading-relaxed">
+                  Paste a text passage or upload a PDF file below, then type your question to extract the exact answer.
                 </p>
-
-                {/* 4 Minimal Preset Pills */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-xl text-left">
+                <div className="flex flex-wrap justify-center gap-2.5">
                   <button
                     type="button"
-                    onClick={() => loadPreset('pdf-revenue')}
-                    className="p-3 bg-[#141C2E]/60 hover:bg-[#141C2E] border border-white/10 rounded-xl text-xs text-slate-300 hover:text-emerald-300 transition-all text-left"
+                    onClick={() => {
+                      setMode('passage');
+                      setIsEditingContext(true);
+                    }}
+                    className="px-4 py-2 bg-[#141C2E] hover:bg-[#1E293B] border border-white/10 rounded-xl text-xs font-medium text-slate-200 transition-all"
                   >
-                    📄 "What was the total revenue?"
+                    Paste Text Passage
                   </button>
                   <button
                     type="button"
-                    onClick={() => loadPreset('apple')}
-                    className="p-3 bg-[#141C2E]/60 hover:bg-[#141C2E] border border-white/10 rounded-xl text-xs text-slate-300 hover:text-emerald-300 transition-all text-left"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-4 py-2 bg-[#141C2E] hover:bg-[#1E293B] border border-white/10 rounded-xl text-xs font-medium text-slate-200 transition-all"
                   >
-                    👥 "Who were the founders of Apple?"
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => loadPreset('table')}
-                    className="p-3 bg-[#141C2E]/60 hover:bg-[#141C2E] border border-white/10 rounded-xl text-xs text-slate-300 hover:text-emerald-300 transition-all text-left"
-                  >
-                    📊 "What is the price of iPhone 15 Pro?"
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => loadPreset('unanswerable')}
-                    className="p-3 bg-[#141C2E]/60 hover:bg-[#141C2E] border border-white/10 rounded-xl text-xs text-slate-300 hover:text-emerald-300 transition-all text-left"
-                  >
-                    🛡️ "What caused the 2024 earthquake?"
+                    Upload PDF Document
                   </button>
                 </div>
               </div>
@@ -874,8 +802,8 @@ const Workspace: React.FC = () => {
                 onKeyDown={handleKeyDown}
                 placeholder={
                   mode === 'pdf'
-                    ? pdfFile
-                      ? `Ask anything about ${pdfFile.name}…`
+                    ? (activeDocumentName || pdfFile)
+                      ? `Ask anything about ${activeDocumentName || pdfFile?.name}…`
                       : 'Upload a PDF to ask questions…'
                     : 'Ask anything about the passage context…'
                 }
@@ -931,10 +859,10 @@ const Workspace: React.FC = () => {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setContext(EXAMPLE_CONTEXT)}
+                  onClick={() => setContext('')}
                   className="px-3 py-1 bg-[#141C2E] hover:bg-[#1E293B] rounded-lg text-slate-300"
                 >
-                  Reset
+                  Clear
                 </button>
                 <button
                   type="button"
